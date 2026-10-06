@@ -52,6 +52,16 @@ local function UpdateBanner(self, Song)
 	self:LoadFromSongBanner(Song):scaletoclipped(WheelItem.Width, WheelItem.Height)
 end
 
+-- Set the current song AND force the chrome to refresh. GAMESTATE:SetCurrentSong only
+-- broadcasts CurrentSongChanged when the song actually changes, so the first load
+-- (and re-selecting the same song) would otherwise leave previews / difficulties /
+-- scores blank until you move.
+local function SetSong(index)
+	CurrentIndex = index
+	GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
+	MESSAGEMAN:Broadcast("CurrentSongChanged")
+end
+
 local function InputHandler(event)
 	local pn = event.PlayerNumber
 	if not pn then return end
@@ -78,16 +88,16 @@ local function InputHandler(event)
 	if pn == PLAYER_2 and not GAMESTATE:IsPlayerEnabled(PLAYER_2) then return end
 
 	if button == "Left" or button == "MenuLeft" or button == "DownLeft" then
-		CurrentIndex = CurrentIndex - 1
-		if CurrentIndex < 1 then CurrentIndex = #Songs end
-		GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
+		local idx = CurrentIndex - 1
+		if idx < 1 then idx = #Songs end
+		SetSong(idx)
 		UpdateItemTargets(CurrentIndex)
 		MESSAGEMAN:Broadcast("Scroll", { Direction = -1 })
 
 	elseif button == "Right" or button == "MenuRight" or button == "DownRight" then
-		CurrentIndex = CurrentIndex + 1
-		if CurrentIndex > #Songs then CurrentIndex = 1 end
-		GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
+		local idx = CurrentIndex + 1
+		if idx > #Songs then idx = 1 end
+		SetSong(idx)
 		UpdateItemTargets(CurrentIndex)
 		MESSAGEMAN:Broadcast("Scroll", { Direction = 1 })
 
@@ -108,7 +118,7 @@ local t = Def.ActorFrame {
 	end,
 
 	OnCommand=function(self)
-		GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
+		SetSong(CurrentIndex)
 		SCREENMAN:GetTopScreen():AddInputCallback(InputHandler)
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
 	end,
