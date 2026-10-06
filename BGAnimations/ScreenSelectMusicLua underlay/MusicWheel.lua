@@ -75,12 +75,6 @@ local function InputHandler(event)
 
 	local button = event.button
 
-	-- Always allow backing out (Phase 1 shell: we never trap the player).
-	if button == "Back" then
-		SCREENMAN:GetTopScreen():Cancel()
-		return
-	end
-
 	-- If an unjoined player attempts to join and has enough credits, join them
 	if (button == "Center" or (not IsGame("pump") and button == "Start")) and
 		not GAMESTATE:IsSideJoined(pn) and GAMESTATE:GetCoins() >= GAMESTATE:GetCoinsNeededToJoin() then
@@ -93,7 +87,21 @@ local function InputHandler(event)
 	if pn == PLAYER_1 and not GAMESTATE:IsPlayerEnabled(PLAYER_1) then return end
 	if pn == PLAYER_2 and not GAMESTATE:IsPlayerEnabled(PLAYER_2) then return end
 
-	if button == "Left" or button == "MenuLeft" or button == "DownLeft" then
+	if SongIsChosen then
+		-- Song chosen: L/R is owned by ChartDisplay to pick the difficulty, so the
+		-- wheel must NOT move. Only allow backing out to the song list.
+		if button == "Back" then
+			MESSAGEMAN:Broadcast("SongUnchosen")
+		end
+		return
+	end
+
+	-- Song selection phase
+	if button == "Back" then
+		SCREENMAN:GetTopScreen():Cancel()
+		return
+
+	elseif button == "Left" or button == "MenuLeft" or button == "DownLeft" then
 		local idx = CurrentIndex - 1
 		if idx < 1 then idx = #Songs end
 		SetSong(idx)
