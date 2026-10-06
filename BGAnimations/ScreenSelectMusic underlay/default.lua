@@ -2,8 +2,11 @@ setenv("IsBasicMode", false)
 
 local t = Def.ActorFrame {
     OnCommand=function(self)
-        -- Always change sort back to groups, since Basic mode can leave it stuck in Preferred
-        SCREENMAN:GetTopScreen():GetMusicWheel():ChangeSort("SortOrder_Group")
+        -- Always change sort back to groups, since Basic mode can leave it stuck in Preferred.
+        -- Guarded because a theme-owned select screen has no engine MusicWheel (GetMusicWheel).
+        local screen = SCREENMAN:GetTopScreen()
+        local wheel = screen.GetMusicWheel and screen:GetMusicWheel()
+        if wheel then wheel:ChangeSort("SortOrder_Group") end
     end
 }
 
