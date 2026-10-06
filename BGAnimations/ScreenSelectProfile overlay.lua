@@ -192,23 +192,14 @@ function UpdateInternal3(self, Player)
             guesttext:visible(false)
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(Player)
             Trace(string.format("ProfileScreen %s UpdateInternal3 ind=%d", ToEnumShortString(Player), ind))
-            if ind > 0 then
+            if ind >= 1 then
                 scroller:SetDestinationItem(ind)
             else
-                local ok = SCREENMAN:GetTopScreen():SetProfileIndex(Player, 0)
-                Trace(string.format("ProfileScreen %s UpdateInternal3 set(0)=%s", ToEnumShortString(Player), tostring(ok)))
-                if ok then
-                    scroller:SetDestinationItem(0)
-                    --self:queuecommand("UpdateInternal2")
-                else
-                    joinframe:visible(false)
-                    smallframe:visible(false)
-                    bigframe:visible(true)
-                    scroller:visible(false)
-                    guesttext:visible(true)
-                    effectframe:visible(false)
-                    --seltext:settext("No profile")
-                end
+                -- Guest: engine index -1 joins the side with no profile, and the
+                -- engine's Finish() still proceeds. (Index 0 means profile slot 0,
+                -- which it cannot load.)
+                if ind ~= -1 then SCREENMAN:GetTopScreen():SetProfileIndex(Player, -1) end
+                scroller:SetDestinationItem(0)
             end
         else
             -- Using card
@@ -270,10 +261,10 @@ local function InputHandler(event)
     elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
         if GAMESTATE:IsHumanPlayer(pn) then
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            -- Scroller item 0 = Guest (engine -2); item n = local profile n-1 (engine n).
+            -- Scroller item 0 = Guest (engine -1); item n = local profile n-1 (engine n).
             local item = (ind >= 1) and ind or 0
             if item - 1 >= 0 then
-                local engineIndex = (item - 1 == 0) and -2 or (item - 1)
+                local engineIndex = (item - 1 == 0) and -1 or (item - 1)
                 if SCREENMAN:GetTopScreen():SetProfileIndex(pn, engineIndex) then
                     Ready[pn] = false
                     MESSAGEMAN:Broadcast("DirectionButton")
@@ -294,7 +285,7 @@ local function InputHandler(event)
             end
         end
 
-    elseif button == "Back" then
+    elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
         -- Let"s simplify things to avoid crashes whenever being utilized out of order
         SCREENMAN:GetTopScreen():Cancel()
     end
