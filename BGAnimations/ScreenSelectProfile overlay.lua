@@ -191,6 +191,7 @@ function UpdateInternal3(self, Player)
             effectframe:visible(true)
             guesttext:visible(false)
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(Player)
+            Trace(string.format("ProfileScreen %s UpdateInternal3 ind=%d", ToEnumShortString(Player), ind))
             if ind > 0 then
                 scroller:SetDestinationItem(ind)
             else
@@ -238,7 +239,10 @@ local function InputHandler(event)
         if not GAMESTATE:IsHumanPlayer(pn) then
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
-            if SCREENMAN:GetTopScreen():GetProfileIndex(pn) == 0 then
+            local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
+            Trace(string.format("ProfileScreen %s START ind=%d localProfiles=%d persistent=%s",
+                ToEnumShortString(pn), ind, PROFILEMAN:GetNumLocalProfiles(), tostring(PROFILEMAN:IsPersistentProfile(pn))))
+            if ind == 0 then
                 setenv("IsBasicMode", true)
                 SCREENMAN:GetTopScreen():StartTransitioningScreen("SM_GoToNextScreen")
             else
@@ -261,7 +265,9 @@ local function InputHandler(event)
         if GAMESTATE:IsHumanPlayer(pn) then
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
             if ind >= 0 then
-                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, ind + 1) then
+                local ok = SCREENMAN:GetTopScreen():SetProfileIndex(pn, ind + 1)
+                Trace(string.format("ProfileScreen %s DOWN ind=%d -> %d ok=%s", ToEnumShortString(pn), ind, ind + 1, tostring(ok)))
+                if ok then
                     MESSAGEMAN:Broadcast("DirectionButton")
                 end
             end
