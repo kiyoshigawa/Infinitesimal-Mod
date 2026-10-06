@@ -242,13 +242,12 @@ local function InputHandler(event)
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
             Trace(string.format("ProfileScreen %s START ind=%d localProfiles=%d persistent=%s",
                 ToEnumShortString(pn), ind, PROFILEMAN:GetNumLocalProfiles(), tostring(PROFILEMAN:IsPersistentProfile(pn))))
-            if ind == 0 then
-                setenv("IsBasicMode", true)
-                SCREENMAN:GetTopScreen():StartTransitioningScreen("SM_GoToNextScreen")
-            else
-                setenv("IsBasicMode", false)
-                SCREENMAN:GetTopScreen():Finish()
-            end
+            -- Always use Finish() (as the fallback theme does). The old guest
+            -- special-case used StartTransitioningScreen, which skipped the engine's
+            -- profile-load path and stole the transition from a partner who had
+            -- selected a real profile -> both sides ended up as guests.
+            setenv("IsBasicMode", ind == 0)
+            SCREENMAN:GetTopScreen():Finish()
         end
 
     elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
