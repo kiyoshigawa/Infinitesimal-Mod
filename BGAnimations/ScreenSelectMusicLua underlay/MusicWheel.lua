@@ -34,8 +34,13 @@ if #Songs == 0 then
 	}
 end
 
-local CurrentIndex = LastSongIndex or math.random(#Songs)
-if CurrentIndex > #Songs then CurrentIndex = 1 end
+local CurrentIndex = math.random(#Songs)
+-- LastSongIndex is a global initialised to 0 by Scripts/02 Main.lua, and 0 is truthy in
+-- Lua, so it must be range-checked instead of used with `or` (which would pick 0
+-- and make Songs[0] nil).
+if LastSongIndex and LastSongIndex >= 1 and LastSongIndex <= #Songs then
+	CurrentIndex = LastSongIndex
+end
 local SongIsChosen = false
 
 -- Update Songs item targets
