@@ -96,6 +96,11 @@ local function SetSelection(index)
 		if songs and songs[1] then GAMESTATE:SetCurrentSong(songs[1]) end
 	elseif entry then
 		GAMESTATE:SetCurrentSong(entry)
+		-- Remember where we are at song level so we can return here after gameplay.
+		if CurrentGroup then
+			LuaWheelLastGroup = CurrentGroup
+			LuaWheelLastIndex = CurrentIndex
+		end
 	end
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
 	Trace("LuaWheel selection: " .. tostring(type(entry) == "string" and entry or (entry and entry:GetDisplayFullTitle()) or "nil"))
@@ -240,8 +245,18 @@ local function InputHandler(event)
 end
 
 -- --------------------------------------------------------------- actor ------
-BuildFolderEntries()
-CurrentIndex = 1
+-- Re-entering the screen (e.g. after finishing a song) should land on the group
+-- and song we left off on, not reset to the folder list. Position is kept in
+-- globals because this file is re-run for each screen instance.
+if type(LuaWheelLastGroup) == "string" and SongsByGroup[LuaWheelLastGroup] then
+	CurrentGroup = LuaWheelLastGroup
+	BuildSongEntries(CurrentGroup)
+	CurrentIndex = tonumber(LuaWheelLastIndex) or 1
+	if CurrentIndex < 1 or CurrentIndex > #Entries then CurrentIndex = 1 end
+else
+	BuildFolderEntries()
+	CurrentIndex = 1
+end
 UpdateItemTargets(CurrentIndex)
 
 local t = Def.ActorFrame {
