@@ -46,6 +46,8 @@ local Targets = {}
 local CurrentIndex = 1
 local CurrentGroup = nil    -- nil = folder level
 local SongIsChosen = false
+local Confirmed = {}        -- PlayerNumber -> true once that side has confirmed
+local Transitioning = false -- one-shot guard for the gameplay transition
 
 local function BuildFolderEntries()
 	Entries = {}
@@ -131,6 +133,38 @@ local function LeaveGroup()
 	MESSAGEMAN:Broadcast("Rebuild")
 end
 
+-- ------------------------------------------------------- confirm/start ------
+-- Difficulty stage: each joined player confirms their own chart; gameplay starts
+-- once every joined player has confirmed. Cancel stays available at all times.
+local function AllJoinedConfirmed()
+	local any = false
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) then
+			any = true
+			if not Confirmed[pn] then return false end
+		end
+	end
+	return any
+end
+
+local function CancelSong()
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if Confirmed[pn] then
+			MESSAGEMAN:Broadcast("StepsUnchosen", { Player = pn })
+		end
+	end
+	MESSAGEMAN:Broadcast("SongUnchosen")
+end
+
+local function StartGameplay()
+	if Transitioning then return end
+	Transitioning = true
+	-- Required, or the transition crashes (see BasicChartDisplay.lua).
+	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
+	GAMESTATE:SetCurrentStyle(GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single")
+	SCREENMAN:GetTopScreen():StartTransitioningScreen("SM_GoToNextScreen")
+end
+
 -- --------------------------------------------------------------- input ------
 local function InputHandler(event)
 	local pn = event.PlayerNumber
@@ -156,9 +190,20 @@ local function InputHandler(event)
 	local select = button == "Start" or button == "MenuStart" or button == "Center"
 
 	if SongIsChosen then
-		-- Difficulty is owned by ChartDisplay; any back/cancel button returns to songs.
+		-- Difficulty is owned by ChartDisplay. Each joined player confirms their own
+		-- chart; gameplay starts once every joined player has confirmed. Cancel must
+		-- stay available even after a player has confirmed -- Basic mode locks the
+		-- confirmed side out via PlayerCanMove, which we deliberately do not do.
+		if event.type == "InputEventType_Repeat" then return end
+
 		if back or button == "MenuUp" or button == "MenuDown" then
-			MESSAGEMAN:Broadcast("SongUnchosen")
+			CancelSong()
+		elseif select then
+			if not Confirmed[pn] then
+				Confirmed[pn] = true
+				MESSAGEMAN:Broadcast("StepsChosen", { Player = pn })
+			end
+			if AllJoinedConfirmed() then StartGameplay() end
 		end
 		return
 	end
@@ -214,8 +259,16 @@ local t = Def.ActorFrame {
 	MusicWheelStartMessageCommand=function(self) self:sleep(0.01):queuecommand("Confirm") end,
 	ConfirmCommand=function(self) MESSAGEMAN:Broadcast("SongChosen") end,
 
-	SongChosenMessageCommand=function(self) SongIsChosen = true end,
-	SongUnchosenMessageCommand=function(self) SongIsChosen = false end,
+	SongChosenMessageCommand=function(self)
+		SongIsChosen = true
+		Confirmed[PLAYER_1] = false
+		Confirmed[PLAYER_2] = false
+	end,
+	SongUnchosenMessageCommand=function(self)
+		SongIsChosen = false
+		Confirmed[PLAYER_1] = false
+		Confirmed[PLAYER_2] = false
+	end,
 
 	-- Play song preview
 	Def.Actor {
