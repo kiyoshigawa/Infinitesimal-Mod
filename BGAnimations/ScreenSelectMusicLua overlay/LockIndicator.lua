@@ -1,24 +1,28 @@
 -- "Chart locked" indicator, one per player, at the bottom corners.
 --
--- StepF2-style cue: when a player confirms their difficulty, that side's bottom
--- corner arrow stays lit (and a sound plays), so it is obvious who is locked in
--- versus still choosing. Driven by StepsChosen/StepsUnchosen, which MusicWheel
--- broadcasts with { Player = pn }.
+-- When a player confirms their difficulty, that side's bottom corner arrow is
+-- tinted and lit so it is obvious who is locked in versus still choosing.
+-- Driven by StepsChosen/StepsUnchosen, which MusicWheel broadcasts with
+-- { Player = pn }.
 --
--- Placement mirrors CornerArrows' GlowShiftDL/DR so the lit glow lands on the
--- same spot as the arrow the player is looking at.
+-- NOTE: the GlowShift* artwork is the *same* SHIFT arrow as CornerArrows draws,
+-- just with a faint halo. Drawing it untinted is invisible, so we recolour it to
+-- make the locked state read at a glance.
+
+local LockColor = { 1, 0.82, 0.25 } -- warm gold
 
 local function LockArrow(pn, texture, x)
 	return Def.Sprite {
 		Texture=THEME:GetPathG("", texture),
 		InitCommand=function(self)
-			self:xy(x, SCREEN_BOTTOM - 72):zoom(0.5):blend('add'):diffusealpha(0)
+			self:xy(x, SCREEN_BOTTOM - 72):zoom(0.5):diffuse(LockColor[1], LockColor[2], LockColor[3], 1):diffusealpha(0)
 		end,
 
 		StepsChosenMessageCommand=function(self, params)
+			Trace("LockIndicator locked: " .. tostring(params and params.Player))
 			if params.Player == pn then
 				-- Quick flash, then settle to a steady lit state.
-				self:stoptweening():diffusealpha(1):linear(0.4):diffusealpha(0.55)
+				self:stoptweening():diffusealpha(1):linear(0.4):diffusealpha(0.9)
 			end
 		end,
 
