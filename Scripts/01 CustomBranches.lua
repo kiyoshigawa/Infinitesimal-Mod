@@ -19,11 +19,14 @@ end
 
 function SelectMusicOrCourse()
     UseBasicMode = LoadModule("Config.Load.lua")("BasicMode","Save/OutFoxPrefs.ini") or false
+    local UseLuaWheel = LoadModule("Config.Load.lua")("LuaMusicWheel","Save/OutFoxPrefs.ini") or false
     
     if GAMESTATE:IsCourseMode() then
         return "ScreenSelectCourse"
     elseif getenv("IsBasicMode") and UseBasicMode then
         return "ScreenSelectMusicBasic"
+    elseif UseLuaWheel then
+        return "ScreenSelectMusicLua"
     else
         return "ScreenSelectMusic"
     end
