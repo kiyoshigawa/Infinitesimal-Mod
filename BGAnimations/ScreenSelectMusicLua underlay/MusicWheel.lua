@@ -89,8 +89,11 @@ local function InputHandler(event)
 
 	if SongIsChosen then
 		-- Song chosen: L/R is owned by ChartDisplay to pick the difficulty, so the
-		-- wheel must NOT move. Only allow backing out to the song list.
-		if button == "Back" then
+		-- wheel must NOT move. Cancel the selection with the usual back/cancel
+		-- buttons: the engine uses MenuUp/MenuDown for two-part cancel; include the
+		-- top pad arrows and Back as well so any of them returns to the song list.
+		if button == "Back" or button == "MenuUp" or button == "MenuDown"
+			or button == "UpLeft" or button == "UpRight" then
 			MESSAGEMAN:Broadcast("SongUnchosen")
 		end
 		return
