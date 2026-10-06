@@ -19,7 +19,6 @@ local function LockArrow(pn, texture, x)
 		end,
 
 		StepsChosenMessageCommand=function(self, params)
-			Trace("LockIndicator locked: " .. tostring(params and params.Player))
 			if params.Player == pn then
 				-- Quick flash, then settle to a steady lit state.
 				self:stoptweening():diffusealpha(1):linear(0.4):diffusealpha(0.9)

@@ -1,6 +1,38 @@
 local CardItemW = 268
 local CardItemH = 64
 
+-- Theme-side selection: 0 = Guest, 1..N = local profile (matches the scroller,
+-- where item 0 is the Guest card and item i is local profile i-1). It is
+-- translated to the engine's profile index only at the boundary -- the engine's
+-- index has a different vocabulary (-3 guest, -2 unjoin, -1 join, 1..N slot).
+local profileIndex = { [PLAYER_1] = 0, [PLAYER_2] = 0 }
+
+local function ProfilePrefKey(pn)
+    return string.format("DefaultLocalProfileIDP%u", (pn == PLAYER_1) and 1 or 2)
+end
+
+-- Map the persisted profile ID back to a theme-side selection (0 = Guest).
+local function SavedProfileIndex(pn)
+    local id = PREFSMAN:GetPreference(ProfilePrefKey(pn))
+    if id and id ~= "" then
+        local idx = PROFILEMAN:GetLocalProfileIndexFromID(id) -- 0-based; -1 if not found
+        if idx and idx >= 0 then return idx + 1 end
+    end
+    return 0
+end
+
+-- Translate a theme selection to the engine and remember it. Profile slot i ->
+-- SetProfileIndex(i); Guest -> SetProfileIndex(-3) (the engine's guest index).
+local function SetProfileIndexLocal(pn, index)
+    if index < 0 or index > PROFILEMAN:GetNumLocalProfiles() then return false end
+    profileIndex[pn] = index
+    SCREENMAN:GetTopScreen():SetProfileIndex(pn, index > 0 and index or -3)
+    return true
+end
+
+profileIndex[PLAYER_1] = SavedProfileIndex(PLAYER_1)
+profileIndex[PLAYER_2] = SavedProfileIndex(PLAYER_2)
+
 function GetLocalProfiles()
     local t = {}
 
@@ -190,15 +222,10 @@ function UpdateInternal3(self, Player)
             scroller:visible(true)
             effectframe:visible(true)
             guesttext:visible(false)
-            local ind = SCREENMAN:GetTopScreen():GetProfileIndex(Player)
-            Trace(string.format("ProfileScreen %s UpdateInternal3 ind=%d", ToEnumShortString(Player), ind))
+            local ind = profileIndex[Player]
             if ind >= 1 then
                 scroller:SetDestinationItem(ind)
             else
-                -- Guest: engine index -1 joins the side with no profile, and the
-                -- engine's Finish() still proceeds. (Index 0 means profile slot 0,
-                -- which it cannot load.)
-                if ind ~= -1 then SCREENMAN:GetTopScreen():SetProfileIndex(Player, -1) end
                 scroller:SetDestinationItem(0)
             end
         else
@@ -219,10 +246,9 @@ function UpdateInternal3(self, Player)
     end
 end
 
--- The engine's ScreenSelectProfile::Finish() is what loads the selected profiles
--- and transitions, and it bails out when no side is "enabled". So every joined
--- side keeps a valid selection (guest = engine index -2, local profile p = p+1),
--- and we call Finish() only once every joined side has confirmed.
+-- The engine's ScreenSelectProfile::Finish() loads the selected profiles and
+-- transitions; it bails when no side is enabled or both sides picked the same
+-- profile. We call it only once every joined side has confirmed.
 local Ready = {}
 local function AllReady()
 	if GAMESTATE:GetNumPlayersEnabled() <= 0 then return false end
@@ -243,15 +269,16 @@ local function InputHandler(event)
     if button == "Start" or button == "Center" then
         MESSAGEMAN:Broadcast("StartButton")
         if not GAMESTATE:IsHumanPlayer(pn) then
-            Trace(string.format("ProfileScreen %s START join", ToEnumShortString(pn)))
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
-            local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
             Ready[pn] = true
-            local r1 = Ready[PLAYER_1] and 1 or 0
-            local r2 = Ready[PLAYER_2] and 1 or 0
-            Trace(string.format("ProfileScreen %s START ind=%d enabled=%d ready=%d%d allReady=%s",
-                ToEnumShortString(pn), ind, GAMESTATE:GetNumPlayersEnabled(), r1, r2, tostring(AllReady())))
+            -- Push this side's choice to the engine and persist it for next boot.
+            SetProfileIndexLocal(pn, profileIndex[pn])
+            if profileIndex[pn] > 0 then
+                PREFSMAN:SetPreference(ProfilePrefKey(pn), PROFILEMAN:GetLocalProfileIDFromIndex(profileIndex[pn] - 1))
+            else
+                PREFSMAN:SetPreference(ProfilePrefKey(pn), "")
+            end
             if AllReady() then
                 setenv("IsBasicMode", false)
                 SCREENMAN:GetTopScreen():Finish()
@@ -259,35 +286,24 @@ local function InputHandler(event)
         end
 
     elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
-        if GAMESTATE:IsHumanPlayer(pn) then
-            local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            -- Scroller item 0 = Guest (engine -1); item n = local profile n-1 (engine n).
-            local item = (ind >= 1) and ind or 0
-            if item - 1 >= 0 then
-                local engineIndex = (item - 1 == 0) and -1 or (item - 1)
-                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, engineIndex) then
-                    Ready[pn] = false
-                    MESSAGEMAN:Broadcast("DirectionButton")
-                end
-            end
+        if GAMESTATE:IsHumanPlayer(pn) and SetProfileIndexLocal(pn, profileIndex[pn] - 1) then
+            Ready[pn] = false
+            MESSAGEMAN:Broadcast("DirectionButton")
         end
 
     elseif button == "Down" or button == "MenuDown" or button == "MenuRight" or button == "DownRight" then
-        if GAMESTATE:IsHumanPlayer(pn) then
-            local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            local item = (ind >= 1) and ind or 0
-            if item + 1 <= PROFILEMAN:GetNumLocalProfiles() then
-                -- item 0 (Guest) -> engine 1 (first local profile)
-                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, item + 1) then
-                    Ready[pn] = false
-                    MESSAGEMAN:Broadcast("DirectionButton")
-                end
-            end
+        if GAMESTATE:IsHumanPlayer(pn) and SetProfileIndexLocal(pn, profileIndex[pn] + 1) then
+            Ready[pn] = false
+            MESSAGEMAN:Broadcast("DirectionButton")
         end
 
     elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
-        -- Let"s simplify things to avoid crashes whenever being utilized out of order
-        SCREENMAN:GetTopScreen():Cancel()
+        -- Back out one step: un-ready the side, otherwise leave the screen.
+        if Ready[pn] then
+            Ready[pn] = false
+        else
+            SCREENMAN:GetTopScreen():Cancel()
+        end
     end
 end
 
