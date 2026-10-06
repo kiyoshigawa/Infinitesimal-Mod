@@ -100,7 +100,8 @@ local function InputHandler(event)
 	end
 
 	-- Song selection phase
-	if button == "Back" then
+	-- Back: the menu Back button, or either top pad arrow (both are "back" in PIU).
+	if button == "Back" or button == "UpLeft" or button == "UpRight" then
 		SCREENMAN:GetTopScreen():Cancel()
 		return
 
