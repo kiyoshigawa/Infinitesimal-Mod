@@ -28,6 +28,10 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
                 Song = GAMESTATE:GetCurrentSong()
                 Chart = GAMESTATE:GetCurrentSteps(pn)
 
+                -- Guard: this can refresh before a song/chart is set on a
+                -- theme-owned select screen, which would make GetHighScoreList error.
+                if not Song or not Chart then return end
+
                 -- Personal best score
                 if PROFILEMAN:IsPersistentProfile(pn) then
                     ProfileScores = PROFILEMAN:GetProfile(pn):GetHighScoreList(Song, Chart):GetHighScores()
