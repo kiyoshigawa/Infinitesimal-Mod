@@ -216,6 +216,10 @@ local function InputHandler(event)
 				MESSAGEMAN:Broadcast("StepsChosen", { Player = pn })
 			end
 			if AllJoinedConfirmed() then StartGameplay() end
+		elseif (left or right) and Confirmed[pn] then
+			-- Locked: the chart cannot change. Give audible feedback so the
+			-- silence is not mistaken for a broken control.
+			MESSAGEMAN:Broadcast("LockedDifficultyDenied")
 		end
 		return
 	end
@@ -270,6 +274,15 @@ local t = Def.ActorFrame {
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
 		-- Defer the first selection until the screen/chrome are fully built.
 		self:sleep(0.1):queuecommand("InitialSelection")
+		-- TEMP diagnostic: is a profile assigned to each joined side?
+		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+			local prof = PROFILEMAN:GetProfile(pn)
+			Trace(string.format("LuaWheel profile %s: name=%s persistent=%s human=%s",
+				ToEnumShortString(pn),
+				prof and prof:GetDisplayName() or "nil",
+				tostring(PROFILEMAN:IsPersistentProfile(pn)),
+				tostring(GAMESTATE:IsHumanPlayer(pn))))
+		end
 	end,
 
 	InitialSelectionCommand=function(self)
@@ -330,6 +343,12 @@ local t = Def.ActorFrame {
 		File=THEME:GetPathS("Common", "Cancel"),
 		IsAction=true,
 		StepsUnchosenMessageCommand=function(self) self:play() end
+	},
+
+	Def.Sound {
+		File=THEME:GetPathS("Common", "Cancel"),
+		IsAction=true,
+		LockedDifficultyDeniedMessageCommand=function(self) self:play() end
 	},
 }
 
