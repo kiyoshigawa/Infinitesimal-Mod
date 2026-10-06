@@ -303,6 +303,19 @@ local t = Def.ActorFrame {
 		IsAction=true,
 		MusicWheelStartMessageCommand=function(self) self:play() end
 	},
+
+	-- Lock feedback: distinct sound when a player locks / unlocks their chart.
+	Def.Sound {
+		File=THEME:GetPathS("Common", "Start"),
+		IsAction=true,
+		StepsChosenMessageCommand=function(self) self:play() end
+	},
+
+	Def.Sound {
+		File=THEME:GetPathS("Common", "Cancel"),
+		IsAction=true,
+		StepsUnchosenMessageCommand=function(self) self:play() end
+	},
 }
 
 -- The Wheel: originally made by Luizsan
