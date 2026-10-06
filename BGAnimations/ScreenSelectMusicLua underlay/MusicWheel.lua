@@ -1,11 +1,15 @@
--- ScreenSelectMusicLua underlay: Phase 1 theme-owned song wheel.
+-- ScreenSelectMusicLua underlay: theme-owned song wheel.
 --
--- This is a deliberately minimal stepping stone: a FLAT list of every playable
--- song (no mix groups / sections / buckets yet). It exists to prove that a
--- theme-owned screen can host a theme-owned wheel alongside Infinitesimal's
--- reused chrome, and that the message / GAMESTATE contract works.
+-- Two levels:
+--   * FOLDER level: browse song groups;     Select opens a group;      Back exits
+--   * SONG   level: browse songs in a group; Select chooses a song;     Back returns
 --
--- Adapted from: BGAnimations/ScreenSelectMusicBasic underlay/MusicWheel.lua
+-- The chrome (preview/video, song info, difficulty list, scores) follows the
+-- highlighted entry; a highlighted folder previews its first playable song.
+--
+-- Synthetic buckets (All Songs / K-Pop / ...) will be added to GroupList later.
+--
+-- Adapted from BGAnimations/ScreenSelectMusicBasic underlay/MusicWheel.lua
 
 local WheelSize = 13
 local WheelCenter = math.ceil( WheelSize * 0.5 )
@@ -13,66 +17,125 @@ local WheelItem = { Width = 212, Height = 120 }
 local WheelSpacing = 250
 local WheelRotation = 0.1
 
-local Songs = {}
-local Targets = {}
+-- ---------------------------------------------------------------- data ------
+local GroupList = {}      -- ordered folder names
+local SongsByGroup = {}   -- folder name -> { playable Song, ... }
 
-for Song in ivalues(SONGMAN:GetAllSongs()) do
-	if #SongUtil.GetPlayableSteps(Song) > 0 then
-		Songs[#Songs+1] = Song
+local function BuildData()
+	GroupList = {}
+	SongsByGroup = {}
+	for Group in ivalues(SONGMAN:GetSongGroupNames()) do
+		local playable = {}
+		for Song in ivalues(SONGMAN:GetSongsInGroup(Group)) do
+			if #SongUtil.GetPlayableSteps(Song) > 0 then
+				playable[#playable+1] = Song
+			end
+		end
+		if #playable > 0 then
+			GroupList[#GroupList+1] = Group
+			SongsByGroup[Group] = playable
+		end
 	end
 end
 
--- Failsafe: nothing to browse.
-if #Songs == 0 then
-	return Def.ActorFrame {
-		Def.Quad { InitCommand=function(self) self:FullScreen():diffuse(Color.Black) end },
-		Def.BitmapText {
-			Font="Common normal",
-			Text="No songs available",
-			InitCommand=function(self) self:Center() end
-		}
-	}
-end
+BuildData()
 
-local CurrentIndex = math.random(#Songs)
--- LastSongIndex is a global initialised to 0 by Scripts/02 Main.lua, and 0 is truthy in
--- Lua, so it must be range-checked instead of used with `or` (which would pick 0
--- and make Songs[0] nil).
-if LastSongIndex and LastSongIndex >= 1 and LastSongIndex <= #Songs then
-	CurrentIndex = LastSongIndex
-end
+-- --------------------------------------------------------------- state ------
+local Entries = {}          -- active list: strings (folders) or Song tables
+local Targets = {}
+local CurrentIndex = 1
+local CurrentGroup = nil    -- nil = folder level
 local SongIsChosen = false
 
--- Update Songs item targets
+local function BuildFolderEntries()
+	Entries = {}
+	for i = 1, #GroupList do Entries[i] = GroupList[i] end
+end
+
+local function BuildSongEntries(group)
+	Entries = {}
+	local songs = SongsByGroup[group] or {}
+	for i = 1, #songs do Entries[i] = songs[i] end
+end
+
 local function UpdateItemTargets(val)
+	if #Entries == 0 then return end
 	for i = 1, WheelSize do
 		Targets[i] = val + i - WheelCenter
-		while Targets[i] > #Songs do Targets[i] = Targets[i] - #Songs end
-		while Targets[i] < 1 do Targets[i] = Targets[i] + #Songs end
+		while Targets[i] > #Entries do Targets[i] = Targets[i] - #Entries end
+		while Targets[i] < 1 do Targets[i] = Targets[i] + #Entries end
 	end
 end
 
--- Manages banner on sprite
-local function UpdateBanner(self, Song)
-	self:LoadFromSongBanner(Song):scaletoclipped(WheelItem.Width, WheelItem.Height)
+-- Load either a folder banner or a song banner onto an item's Banner sprite.
+local function UpdateItem(self, entry)
+	local banner = self:GetChild("Banner")
+	local name = self:GetChild("GroupName")
+	if type(entry) == "string" then
+		local path = SONGMAN:GetSongGroupBannerPath(entry)
+		if path == "" then banner:Load(nil) else banner:Load(path) end
+		banner:scaletoclipped(WheelItem.Width, WheelItem.Height)
+		name:settext(entry)
+	elseif entry then
+		banner:LoadFromSongBanner(entry):scaletoclipped(WheelItem.Width, WheelItem.Height)
+		name:settext("")
+	else
+		banner:Load(nil)
+		name:settext("")
+	end
 end
 
--- Set the current song AND force the chrome to refresh. GAMESTATE:SetCurrentSong only
--- broadcasts CurrentSongChanged when the song actually changes, so the first load
--- (and re-selecting the same song) would otherwise leave previews / difficulties /
--- scores blank until you move.
-local function SetSong(index)
+-- Point the chrome (preview / difficulty / scores) at the highlighted entry.
+local function SetSelection(index)
 	CurrentIndex = index
-	GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
+	local entry = Entries[CurrentIndex]
+	if type(entry) == "string" then
+		local songs = SongsByGroup[entry]
+		if songs and songs[1] then GAMESTATE:SetCurrentSong(songs[1]) end
+	elseif entry then
+		GAMESTATE:SetCurrentSong(entry)
+	end
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
-	Trace("LuaWheel SetSong: " .. tostring(index) .. " / " .. (Songs[CurrentIndex] and Songs[CurrentIndex]:GetDisplayFullTitle() or "nil"))
+	Trace("LuaWheel selection: " .. tostring(type(entry) == "string" and entry or (entry and entry:GetDisplayFullTitle()) or "nil"))
 end
 
+local function Move(delta)
+	if #Entries == 0 then return end
+	CurrentIndex = CurrentIndex + delta
+	if CurrentIndex < 1 then CurrentIndex = #Entries end
+	if CurrentIndex > #Entries then CurrentIndex = 1 end
+	SetSelection(CurrentIndex)
+	UpdateItemTargets(CurrentIndex)
+	MESSAGEMAN:Broadcast("Scroll", { Direction = delta })
+end
+
+local function EnterGroup(group)
+	CurrentGroup = group
+	BuildSongEntries(group)
+	CurrentIndex = 1
+	SetSelection(CurrentIndex)
+	UpdateItemTargets(CurrentIndex)
+	MESSAGEMAN:Broadcast("Rebuild")
+end
+
+local function LeaveGroup()
+	local previous = CurrentGroup
+	CurrentGroup = nil
+	BuildFolderEntries()
+	CurrentIndex = 1
+	for i = 1, #GroupList do
+		if GroupList[i] == previous then CurrentIndex = i break end
+	end
+	SetSelection(CurrentIndex)
+	UpdateItemTargets(CurrentIndex)
+	MESSAGEMAN:Broadcast("Rebuild")
+end
+
+-- --------------------------------------------------------------- input ------
 local function InputHandler(event)
 	local pn = event.PlayerNumber
 	if not pn then return end
 	if event.type == "InputEventType_Release" then return end
-
 	local button = event.button
 
 	-- If an unjoined player attempts to join and has enough credits, join them
@@ -87,65 +150,64 @@ local function InputHandler(event)
 	if pn == PLAYER_1 and not GAMESTATE:IsPlayerEnabled(PLAYER_1) then return end
 	if pn == PLAYER_2 and not GAMESTATE:IsPlayerEnabled(PLAYER_2) then return end
 
+	local back   = button == "Back" or button == "UpLeft" or button == "UpRight"
+	local left   = button == "Left" or button == "MenuLeft" or button == "DownLeft"
+	local right  = button == "Right" or button == "MenuRight" or button == "DownRight"
+	local select = button == "Start" or button == "MenuStart" or button == "Center"
+
 	if SongIsChosen then
-		-- Song chosen: L/R is owned by ChartDisplay to pick the difficulty, so the
-		-- wheel must NOT move. Cancel the selection with the usual back/cancel
-		-- buttons: the engine uses MenuUp/MenuDown for two-part cancel; include the
-		-- top pad arrows and Back as well so any of them returns to the song list.
-		if button == "Back" or button == "MenuUp" or button == "MenuDown"
-			or button == "UpLeft" or button == "UpRight" then
+		-- Difficulty is owned by ChartDisplay; any back/cancel button returns to songs.
+		if back or button == "MenuUp" or button == "MenuDown" then
 			MESSAGEMAN:Broadcast("SongUnchosen")
 		end
 		return
 	end
 
-	-- Song selection phase
-	-- Back: the menu Back button, or either top pad arrow (both are "back" in PIU).
-	if button == "Back" or button == "UpLeft" or button == "UpRight" then
-		SCREENMAN:GetTopScreen():Cancel()
-		return
-
-	elseif button == "Left" or button == "MenuLeft" or button == "DownLeft" then
-		local idx = CurrentIndex - 1
-		if idx < 1 then idx = #Songs end
-		SetSong(idx)
-		UpdateItemTargets(CurrentIndex)
-		MESSAGEMAN:Broadcast("Scroll", { Direction = -1 })
-
-	elseif button == "Right" or button == "MenuRight" or button == "DownRight" then
-		local idx = CurrentIndex + 1
-		if idx > #Songs then idx = 1 end
-		SetSong(idx)
-		UpdateItemTargets(CurrentIndex)
-		MESSAGEMAN:Broadcast("Scroll", { Direction = 1 })
-
-	elseif button == "Start" or button == "MenuStart" or button == "Center" then
-		-- Phase 1: just emit the confirm message so the chrome's contract can be
-		-- verified. Gameplay start is implemented in a later phase.
-		MESSAGEMAN:Broadcast("MusicWheelStart")
+	if CurrentGroup == nil then
+		-- folder level
+		if left then Move(-1)
+		elseif right then Move(1)
+		elseif select then
+			local entry = Entries[CurrentIndex]
+			if type(entry) == "string" then EnterGroup(entry) end
+		elseif back then
+			SCREENMAN:GetTopScreen():Cancel()
+		end
+	else
+		-- song level
+		if left then Move(-1)
+		elseif right then Move(1)
+		elseif select then
+			MESSAGEMAN:Broadcast("MusicWheelStart")
+		elseif back then
+			LeaveGroup()
+		end
 	end
 
 	MESSAGEMAN:Broadcast("UpdateMusic")
 end
 
+-- --------------------------------------------------------------- actor ------
+BuildFolderEntries()
+CurrentIndex = 1
+UpdateItemTargets(CurrentIndex)
+
 local t = Def.ActorFrame {
 	InitCommand=function(self)
 		self:y(SCREEN_HEIGHT / 2 + 155):fov(90):SetDrawByZPosition(true)
 		:vanishpoint(SCREEN_CENTER_X, SCREEN_BOTTOM - 150)
-		UpdateItemTargets(CurrentIndex)
 	end,
 
 	OnCommand=function(self)
 		SCREENMAN:GetTopScreen():AddInputCallback(InputHandler)
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
-		-- Defer the first selection until the screen/chrome are fully built: a
-		-- CurrentSongChanged broadcast during construction does not reach the chrome
-		-- actors, so previews / difficulty would stay blank until the player moved.
-		self:sleep(0.1):queuecommand("InitialSong")
+		-- Defer the first selection until the screen/chrome are fully built.
+		self:sleep(0.1):queuecommand("InitialSelection")
 	end,
 
-	InitialSongCommand=function(self)
-		SetSong(CurrentIndex)
+	InitialSelectionCommand=function(self)
+		SetSelection(CurrentIndex)
+		MESSAGEMAN:Broadcast("Rebuild")
 	end,
 
 	-- Race condition workaround (matches Basic wheel)
@@ -185,14 +247,20 @@ local t = Def.ActorFrame {
 
 -- The Wheel: originally made by Luizsan
 for i = 1, WheelSize do
+	local slot = i
 
 	t[#t+1] = Def.ActorFrame{
 		OnCommand=function(self)
-			-- Load banner
-			UpdateBanner(self:GetChild("Banner"), Songs[Targets[i]])
+			UpdateItem(self, Entries[Targets[slot]])
+			self:playcommand("Scroll", { Direction = 0 })
+		end,
 
-			-- Set initial position, Direction = 0 means it won't tween
-			self:playcommand("Scroll", {Direction = 0})
+		-- Rebuild (level change): reset the scroll offset and reload every slot.
+		RebuildMessageCommand=function(self)
+			i = slot
+			self:stoptweening()
+			UpdateItem(self, Entries[Targets[slot]])
+			self:playcommand("Scroll", { Direction = 0 })
 		end,
 
 		ScrollMessageCommand=function(self,param)
@@ -215,9 +283,9 @@ for i = 1, WheelSize do
 			while i > WheelSize do i = i - WheelSize end
 			while i < 1 do i = i + WheelSize end
 
-			-- If it's an edge item, load a new banner. Edge items should never tween
+			-- If it's an edge item, load a new entry. Edge items should never tween
 			if i == 1 or i == WheelSize then
-				UpdateBanner(self:GetChild("Banner"), Songs[Targets[i]])
+				UpdateItem(self, Entries[Targets[i]])
 			elseif tween then
 				self:easeoutexpo(0.4)
 			end
@@ -237,6 +305,15 @@ for i = 1, WheelSize do
 			Texture=THEME:GetPathG("", "MusicWheel/SongFrame"),
 		},
 
+		Def.BitmapText {
+			Name="GroupName",
+			Font="Montserrat semibold 40px",
+			InitCommand=function(self)
+				self:zoom(0.6):maxwidth(WheelItem.Width * 0.9 / self:GetZoom())
+				:shadowlength(2)
+			end,
+		},
+
 		Def.ActorFrame {
 			Def.Quad {
 				InitCommand=function(self)
@@ -252,7 +329,7 @@ for i = 1, WheelSize do
 				InitCommand=function(self)
 					self:addy(-50):zoom(0.4):skewx(-0.1):diffusetopedge(0.95,0.95,0.95,0.8):shadowlength(1.5)
 				end,
-				RefreshCommand=function(self,param) self:settext(Targets[i]) end
+				RefreshCommand=function(self,param) self:settext(Targets[slot]) end
 			}
 		}
 	}
