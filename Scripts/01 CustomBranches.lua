@@ -54,8 +54,14 @@ CustomBranch = {
     end,
     AfterSelectProfile = function()
         UseBasicMode = LoadModule("Config.Load.lua")("BasicMode","Save/OutFoxPrefs.ini") or false
-        
-        return ToLoadOrNotToLoad()
+        -- Always route through ScreenProfileLoad: that screen is where the engine
+        -- actually loads the profiles chosen on ScreenSelectProfile. The previous
+        -- version only did this for memory cards, so local profiles were never
+        -- loaded and every side fell back to a guest/machine profile.
+        return "ScreenProfileLoad"
+    end,
+    AfterProfileLoad = function()
+        return SelectMusicOrCourse()
     end,
     AfterProfileSave = function()
         if GAMESTATE:IsEventMode() then
