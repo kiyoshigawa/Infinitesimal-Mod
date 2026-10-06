@@ -97,7 +97,10 @@ local t = Def.ActorFrame {
 
 -- Avatar display and info on bottom panel
 for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
-    if PROFILEMAN:GetProfile(pn) and (PROFILEMAN:IsPersistentProfile(pn) or PROFILEMAN:ProfileWasLoadedFromMemoryCard(pn)) then
+    -- Show an entry for every joined side. A side without a loaded profile is a
+    -- guest: give it its own look instead of hiding it entirely.
+    local isGuest = not (PROFILEMAN:IsPersistentProfile(pn) or PROFILEMAN:ProfileWasLoadedFromMemoryCard(pn))
+    if PROFILEMAN:GetProfile(pn) then
         t[#t+1] = Def.ActorFrame {
             Def.ActorFrame {
                 InitCommand=function(self) self:y(128) end,
@@ -127,7 +130,9 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
                         self:xy(SCREEN_CENTER_X + (pn == PLAYER_2 and 292 or -292), SCREEN_BOTTOM - 48):zoom(0.9)
                         :maxwidth(112 / self:GetZoom()):skewx(-0.2):shadowlength(1)
 
-                        if PROFILEMAN:GetProfile(pn):GetDisplayName() == "" then
+                        if isGuest then
+                            self:settext("Guest"):diffusealpha(0.6)
+                        elseif PROFILEMAN:GetProfile(pn):GetDisplayName() == "" then
                             self:settext(THEME:GetString("ProfileStats", "No Profile"))
                         end
                     end
@@ -147,11 +152,15 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
                     InitCommand=function(self)
                         self:xy(SCREEN_CENTER_X + (pn == PLAYER_2 and 281 or -281), SCREEN_BOTTOM - 26):zoom(0.9)
                         :maxwidth(96 / self:GetZoom()):skewx(-0.2):shadowlength(1)
-                        lvl = math.floor(math.sqrt(PROFILEMAN:GetProfile(pn):GetTotalDancePoints() / 500)) + 1
-                        -- You can check if a number is "nan" by comparing it to itself
-                        -- because "nan" is not equal to anything, not even itself
-                        if (lvl < 0) or (lvl ~= lvl) then lvl = 0 end
-                        self:settext(THEME:GetString("ProfileStats", "Level") .. " " .. lvl)
+                        if isGuest then
+                            self:settext(""):visible(false)
+                        else
+                            lvl = math.floor(math.sqrt(PROFILEMAN:GetProfile(pn):GetTotalDancePoints() / 500)) + 1
+                            -- You can check if a number is "nan" by comparing it to itself
+                            -- because "nan" is not equal to anything, not even itself
+                            if (lvl < 0) or (lvl ~= lvl) then lvl = 0 end
+                            self:settext(THEME:GetString("ProfileStats", "Level") .. " " .. lvl)
+                        end
                     end
                 },
 
