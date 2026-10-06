@@ -197,7 +197,14 @@ local function InputHandler(event)
 		if event.type == "InputEventType_Repeat" then return end
 
 		if back or button == "MenuUp" or button == "MenuDown" then
-			CancelSong()
+			if Confirmed[pn] then
+				-- Unlock just this player and stay in difficulty select; a second
+				-- Back (now unlocked) leaves to the song list.
+				Confirmed[pn] = false
+				MESSAGEMAN:Broadcast("StepsUnchosen", { Player = pn })
+			else
+				CancelSong()
+			end
 		elseif select then
 			if not Confirmed[pn] then
 				Confirmed[pn] = true
