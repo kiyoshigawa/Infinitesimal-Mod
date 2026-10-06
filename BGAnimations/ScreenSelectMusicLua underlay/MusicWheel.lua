@@ -60,6 +60,7 @@ local function SetSong(index)
 	CurrentIndex = index
 	GAMESTATE:SetCurrentSong(Songs[CurrentIndex])
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
+	Trace("LuaWheel SetSong: " .. tostring(index) .. " / " .. (Songs[CurrentIndex] and Songs[CurrentIndex]:GetDisplayFullTitle() or "nil"))
 end
 
 local function InputHandler(event)
@@ -118,9 +119,16 @@ local t = Def.ActorFrame {
 	end,
 
 	OnCommand=function(self)
-		SetSong(CurrentIndex)
 		SCREENMAN:GetTopScreen():AddInputCallback(InputHandler)
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
+		-- Defer the first selection until the screen/chrome are fully built: a
+		-- CurrentSongChanged broadcast during construction does not reach the chrome
+		-- actors, so previews / difficulty would stay blank until the player moved.
+		self:sleep(0.1):queuecommand("InitialSong")
+	end,
+
+	InitialSongCommand=function(self)
+		SetSong(CurrentIndex)
 	end,
 
 	-- Race condition workaround (matches Basic wheel)
