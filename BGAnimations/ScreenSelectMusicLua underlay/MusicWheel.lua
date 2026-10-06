@@ -345,7 +345,9 @@ local t = Def.ActorFrame {
 	},
 
 	Def.Sound {
-		File=THEME:GetPathS("Common", "value"),
+		-- Backing out of a locked chart: distinct from the lock (Start) and the
+		-- denied-L/R (Cancel) sounds.
+		File=THEME:GetPathS("_switch", "down"),
 		IsAction=true,
 		StepsUnchosenMessageCommand=function(self) self:play() end
 	},
