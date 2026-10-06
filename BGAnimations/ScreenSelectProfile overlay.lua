@@ -195,7 +195,9 @@ function UpdateInternal3(self, Player)
             if ind > 0 then
                 scroller:SetDestinationItem(ind)
             else
-                if SCREENMAN:GetTopScreen():SetProfileIndex(Player, 0) then
+                -- Engine guest index is -2. Index 0 leaves the side "not enabled",
+                -- which makes the engine's Finish() bail out without loading.
+                if SCREENMAN:GetTopScreen():SetProfileIndex(Player, -2) then
                     scroller:SetDestinationItem(0)
                     --self:queuecommand("UpdateInternal2")
                 else
@@ -226,6 +228,19 @@ function UpdateInternal3(self, Player)
     end
 end
 
+-- The engine's ScreenSelectProfile::Finish() is what loads the selected profiles
+-- and transitions, and it bails out when no side is "enabled". So every joined
+-- side keeps a valid selection (guest = engine index -2, local profile p = p+1),
+-- and we call Finish() only once every joined side has confirmed.
+local Ready = {}
+local function AllReady()
+	if GAMESTATE:GetNumPlayersEnabled() <= 0 then return false end
+	for p in ivalues(GAMESTATE:GetHumanPlayers()) do
+		if not Ready[p] then return false end
+	end
+	return true
+end
+
 local function InputHandler(event)
 	local pn = event.PlayerNumber
     if not pn then return end
@@ -240,12 +255,11 @@ local function InputHandler(event)
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            Trace(string.format("ProfileScreen %s START ind=%d localProfiles=%d persistent=%s",
-                ToEnumShortString(pn), ind, PROFILEMAN:GetNumLocalProfiles(), tostring(PROFILEMAN:IsPersistentProfile(pn))))
-            if ind == 0 then
-                setenv("IsBasicMode", true)
-                SCREENMAN:GetTopScreen():StartTransitioningScreen("SM_GoToNextScreen")
-            else
+            Trace(string.format("ProfileScreen %s START ind=%d localProfiles=%d", ToEnumShortString(pn), ind, PROFILEMAN:GetNumLocalProfiles()))
+            Ready[pn] = true
+            if AllReady() then
+                -- The engine loads each side's selected profile here. Never use
+                -- StartTransitioningScreen, which skips that load.
                 setenv("IsBasicMode", false)
                 SCREENMAN:GetTopScreen():Finish()
             end
@@ -254,8 +268,12 @@ local function InputHandler(event)
     elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
         if GAMESTATE:IsHumanPlayer(pn) then
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            if ind >= 1 then
-                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, ind - 1) then
+            -- Scroller item 0 = Guest (engine -2); item n = local profile n-1 (engine n).
+            local item = (ind >= 1) and ind or 0
+            if item - 1 >= 0 then
+                local engineIndex = (item - 1 == 0) and -2 or (item - 1)
+                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, engineIndex) then
+                    Ready[pn] = false
                     MESSAGEMAN:Broadcast("DirectionButton")
                 end
             end
@@ -264,10 +282,11 @@ local function InputHandler(event)
     elseif button == "Down" or button == "MenuDown" or button == "MenuRight" or button == "DownRight" then
         if GAMESTATE:IsHumanPlayer(pn) then
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            if ind >= 0 then
-                local ok = SCREENMAN:GetTopScreen():SetProfileIndex(pn, ind + 1)
-                Trace(string.format("ProfileScreen %s DOWN ind=%d -> %d ok=%s", ToEnumShortString(pn), ind, ind + 1, tostring(ok)))
-                if ok then
+            local item = (ind >= 1) and ind or 0
+            if item + 1 <= PROFILEMAN:GetNumLocalProfiles() then
+                -- item 0 (Guest) -> engine 1 (first local profile)
+                if SCREENMAN:GetTopScreen():SetProfileIndex(pn, item + 1) then
+                    Ready[pn] = false
                     MESSAGEMAN:Broadcast("DirectionButton")
                 end
             end
