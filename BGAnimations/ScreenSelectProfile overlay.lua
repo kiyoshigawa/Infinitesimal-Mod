@@ -195,9 +195,9 @@ function UpdateInternal3(self, Player)
             if ind > 0 then
                 scroller:SetDestinationItem(ind)
             else
-                -- Engine guest index is -2. Index 0 leaves the side "not enabled",
-                -- which makes the engine's Finish() bail out without loading.
-                if SCREENMAN:GetTopScreen():SetProfileIndex(Player, -2) then
+                local ok = SCREENMAN:GetTopScreen():SetProfileIndex(Player, 0)
+                Trace(string.format("ProfileScreen %s UpdateInternal3 set(0)=%s", ToEnumShortString(Player), tostring(ok)))
+                if ok then
                     scroller:SetDestinationItem(0)
                     --self:queuecommand("UpdateInternal2")
                 else
@@ -252,14 +252,16 @@ local function InputHandler(event)
     if button == "Start" or button == "Center" then
         MESSAGEMAN:Broadcast("StartButton")
         if not GAMESTATE:IsHumanPlayer(pn) then
+            Trace(string.format("ProfileScreen %s START join", ToEnumShortString(pn)))
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
             local ind = SCREENMAN:GetTopScreen():GetProfileIndex(pn)
-            Trace(string.format("ProfileScreen %s START ind=%d localProfiles=%d", ToEnumShortString(pn), ind, PROFILEMAN:GetNumLocalProfiles()))
             Ready[pn] = true
+            local r1 = Ready[PLAYER_1] and 1 or 0
+            local r2 = Ready[PLAYER_2] and 1 or 0
+            Trace(string.format("ProfileScreen %s START ind=%d enabled=%d ready=%d%d allReady=%s",
+                ToEnumShortString(pn), ind, GAMESTATE:GetNumPlayersEnabled(), r1, r2, tostring(AllReady())))
             if AllReady() then
-                -- The engine loads each side's selected profile here. Never use
-                -- StartTransitioningScreen, which skips that load.
                 setenv("IsBasicMode", false)
                 SCREENMAN:GetTopScreen():Finish()
             end
