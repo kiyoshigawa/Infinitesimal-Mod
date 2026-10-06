@@ -23,8 +23,12 @@ for pn in ivalues(GAMESTATE:GetEnabledPlayers()) do
         CurrentChartChangedMessageCommand=function(self) if SongIsChosen then self:playcommand("Refresh") end end,
         
         RefreshCommand=function(self)
+            -- Guard: on a theme-owned select screen the current steps may not be set yet
+            -- (a chart can also be unset when this refreshes).
+            local steps = GAMESTATE:GetCurrentSteps(pn)
+            if not steps then return end
             local GameType = GAMESTATE:GetCurrentGame():GetName():gsub("^%l", string.upper)
-            local StepsType = ToEnumShortString(ToEnumShortString(GAMESTATE:GetCurrentSteps(pn):GetStepsType()))
+            local StepsType = ToEnumShortString(ToEnumShortString(steps:GetStepsType()))
             if GameType == "Pump" or GameType == "Dance" or GameType == "Techno" then
                 local IconPath = "UI/PadIcons/"..GameType.."/"..StepsType
                 if string.sub(StepsType,1,6) == "Single" or StepsType == "Solo" or StepsType == "Threepanel" then
