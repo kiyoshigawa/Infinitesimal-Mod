@@ -277,11 +277,12 @@ local t = Def.ActorFrame {
 		-- TEMP diagnostic: is a profile assigned to each joined side?
 		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
 			local prof = PROFILEMAN:GetProfile(pn)
-			Trace(string.format("LuaWheel profile %s: name=%s persistent=%s human=%s",
+			Trace(string.format("LuaWheel profile %s: name='%s' persistent=%s human=%s localProfiles=%d",
 				ToEnumShortString(pn),
 				prof and prof:GetDisplayName() or "nil",
 				tostring(PROFILEMAN:IsPersistentProfile(pn)),
-				tostring(GAMESTATE:IsHumanPlayer(pn))))
+				tostring(GAMESTATE:IsHumanPlayer(pn)),
+				PROFILEMAN:GetNumLocalProfiles()))
 		end
 	end,
 
@@ -298,11 +299,15 @@ local t = Def.ActorFrame {
 		SongIsChosen = true
 		Confirmed[PLAYER_1] = false
 		Confirmed[PLAYER_2] = false
+		-- Slide the wheel out of the way so the expanded chart/stats pane is visible
+		-- (the stock wheel does this via MusicWheelSongChosenMessageCommand).
+		self:stoptweening():easeoutexpo(0.5):y(SCREEN_HEIGHT / 2 + 150)
 	end,
 	SongUnchosenMessageCommand=function(self)
 		SongIsChosen = false
 		Confirmed[PLAYER_1] = false
 		Confirmed[PLAYER_2] = false
+		self:stoptweening():easeoutexpo(0.5):y(SCREEN_HEIGHT / 2 - 150)
 	end,
 
 	-- Play song preview
@@ -340,7 +345,7 @@ local t = Def.ActorFrame {
 	},
 
 	Def.Sound {
-		File=THEME:GetPathS("Common", "Cancel"),
+		File=THEME:GetPathS("Common", "value"),
 		IsAction=true,
 		StepsUnchosenMessageCommand=function(self) self:play() end
 	},
