@@ -442,16 +442,54 @@ local function CancelSong()
 	MESSAGEMAN:Broadcast("SongUnchosen")
 end
 
+-- Primary joined player (master, else any enabled side).
+local function PrimaryPlayer()
+	local master = GAMESTATE:GetMasterPlayerNumber()
+	if master and GAMESTATE:IsPlayerEnabled(master) then return master end
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) then return pn end
+	end
+	return nil
+end
+
+-- Style matching the selected chart's steps type (and player count). Forcing the
+-- wrong style makes SetCurrentStyle clear the chosen chart, which then crashes
+-- ScreenGameplay::Init (assert m_pCurSteps[p] != nullptr).
+local function StyleForSelection()
+	local pn = PrimaryPlayer()
+	local steps = pn and GAMESTATE:GetCurrentSteps(pn)
+	if not steps or not GAMEMAN then return nil end
+	local wantType = steps:GetStepsType()
+	local wantVersus = GAMESTATE:GetNumSidesJoined() > 1
+	local fallback
+	for _, style in ipairs(GAMEMAN:GetStylesForGame(GAMESTATE:GetCurrentGame():GetName())) do
+		if style:GetStepsType() == wantType then
+			local isVersus = ToEnumShortString(style:GetStyleType()) == "TwoPlayersTwoSides"
+			if isVersus == wantVersus then return style:GetName() end
+			fallback = fallback or style:GetName()
+		end
+	end
+	return fallback
+end
+
 local function StartGameplay()
 	if Transitioning then return end
 	Transitioning = true
-	-- Save each side's chosen chart before leaving, so difficulty can be restored,
-	-- and persist each joined profile's resume record.
+	-- Set the style to match the chosen chart, else SetCurrentStyle clears it and
+	-- ScreenGameplay::Init asserts (hard crash).
+	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
+	GAMESTATE:SetCurrentStyle(StyleForSelection() or (GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single"))
+	-- Backstop: never transition with a missing chart; let the player reselect.
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) and not GAMESTATE:GetCurrentSteps(pn) then
+			MESSAGEMAN:Broadcast("LockedDifficultyDenied")
+			Transitioning = false
+			return
+		end
+	end
+	-- Save each side's chosen chart, and persist each joined profile's resume record.
 	CaptureCharts(GAMESTATE:GetCurrentSong())
 	SaveResumeForProfiles()
-	-- Required, or the transition crashes (see BasicChartDisplay.lua).
-	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
-	GAMESTATE:SetCurrentStyle(GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single")
 	SCREENMAN:GetTopScreen():StartTransitioningScreen("SM_GoToNextScreen")
 end
 
