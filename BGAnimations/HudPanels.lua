@@ -95,7 +95,9 @@ local t = Def.ActorFrame {
     },
 }
 
--- Avatar display and info on bottom panel
+-- Avatar display and info on bottom panel. Skipped on the profile-select screen:
+-- nothing is loaded there yet, so the slots would read "Guest" for everyone.
+if Var "LoadingScreen" ~= "ScreenSelectProfile" then
 for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
     -- Show an entry for every joined side. A side without a loaded profile is a
     -- guest: give it its own look instead of hiding it entirely.
@@ -192,6 +194,7 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
             }
         }
     end
+end
 end
 
 return t

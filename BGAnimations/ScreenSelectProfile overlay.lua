@@ -30,8 +30,8 @@ local function SetProfileIndexLocal(pn, index)
     return true
 end
 
-profileIndex[PLAYER_1] = SavedProfileIndex(PLAYER_1)
-profileIndex[PLAYER_2] = SavedProfileIndex(PLAYER_2)
+-- Defaults are resolved at join time (see InputHandler): only the first side to
+-- join picks up its saved profile; later joiners start on Guest.
 
 function GetLocalProfiles()
     local t = {}
@@ -269,9 +269,12 @@ local function InputHandler(event)
     if button == "Start" or button == "Center" then
         MESSAGEMAN:Broadcast("StartButton")
         if not GAMESTATE:IsHumanPlayer(pn) then
+            -- First joiner picks up its saved profile; later joiners start on Guest.
+            profileIndex[pn] = (GAMESTATE:GetNumPlayersEnabled() == 0) and SavedProfileIndex(pn) or 0
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
             Ready[pn] = true
+            MESSAGEMAN:Broadcast("ProfileLocked", { Player = pn })
             -- Push this side's choice to the engine and persist it for next boot.
             SetProfileIndexLocal(pn, profileIndex[pn])
             if profileIndex[pn] > 0 then
@@ -286,21 +289,28 @@ local function InputHandler(event)
         end
 
     elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
-        if GAMESTATE:IsHumanPlayer(pn) and SetProfileIndexLocal(pn, profileIndex[pn] - 1) then
-            Ready[pn] = false
-            MESSAGEMAN:Broadcast("DirectionButton")
+        if GAMESTATE:IsHumanPlayer(pn) then
+            if Ready[pn] then
+                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
+            elseif SetProfileIndexLocal(pn, profileIndex[pn] - 1) then
+                MESSAGEMAN:Broadcast("DirectionButton")
+            end
         end
 
     elseif button == "Down" or button == "MenuDown" or button == "MenuRight" or button == "DownRight" then
-        if GAMESTATE:IsHumanPlayer(pn) and SetProfileIndexLocal(pn, profileIndex[pn] + 1) then
-            Ready[pn] = false
-            MESSAGEMAN:Broadcast("DirectionButton")
+        if GAMESTATE:IsHumanPlayer(pn) then
+            if Ready[pn] then
+                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
+            elseif SetProfileIndexLocal(pn, profileIndex[pn] + 1) then
+                MESSAGEMAN:Broadcast("DirectionButton")
+            end
         end
 
     elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
-        -- Back out one step: un-ready the side, otherwise leave the screen.
+        -- Back out one step: unlock the side, otherwise leave the screen.
         if Ready[pn] then
             Ready[pn] = false
+            MESSAGEMAN:Broadcast("ProfileUnlocked", { Player = pn })
         else
             SCREENMAN:GetTopScreen():Cancel()
         end
@@ -321,7 +331,12 @@ local t = Def.ActorFrame {
         self:queuecommand("UpdateInternal2")
     end,
 
-    PlayerUnjoinedMessageCommand=function(self)
+    PlayerUnjoinedMessageCommand=function(self, params)
+        -- Treat an unjoin as if the side never joined: clear its lock and unglow.
+        if params and params.Player then
+            Ready[params.Player] = false
+            MESSAGEMAN:Broadcast("ProfileUnlocked", { Player = params.Player })
+        end
         self:queuecommand("UpdateInternal2")
     end,
 
@@ -376,6 +391,18 @@ local t = Def.ActorFrame {
             File=THEME:GetPathS("Common", "value"),
             IsAction=true,
             DirectionButtonMessageCommand=function(self) self:play() end
+        },
+
+        Def.Sound {
+            File=THEME:GetPathS("_switch", "down"),
+            IsAction=true,
+            ProfileUnlockedMessageCommand=function(self) self:play() end
+        },
+
+        Def.Sound {
+            File=THEME:GetPathS("Common", "Cancel"),
+            IsAction=true,
+            ProfileLockDeniedMessageCommand=function(self) self:play() end
         }
     }
 }
