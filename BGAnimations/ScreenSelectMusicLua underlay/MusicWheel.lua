@@ -143,11 +143,12 @@ local SESSION_SCHEMA = 1
 local function Session()
 	local s = LuaWheelSession
 	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
-		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 } }
+		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, ChartBySong = {} }
 		LuaWheelSession = s
 	end
 	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
 	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
+	if type(s.ChartBySong) ~= "table" then s.ChartBySong = {} end
 	return s
 end
 
@@ -158,6 +159,36 @@ local function IndexOfSongDir(dir)
 		if type(e) ~= "string" and e:GetSongDir() == dir then return i end
 	end
 	return nil
+end
+
+-- Remember each joined side's chart for a song, so difficulty can be restored later.
+local function CaptureCharts(song)
+	if not song then return end
+	local refs = {}
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) then
+			local steps = GAMESTATE:GetCurrentSteps(pn)
+			if steps then
+				refs[pn] = { Key = steps:GetChartKey(), Difficulty = ToEnumShortString(steps:GetDifficulty()) }
+			end
+		end
+	end
+	if next(refs) then
+		Session().ChartBySong[song:GetSongDir()] = refs
+	end
+end
+
+-- Ask ChartDisplay to restore saved per-side charts for `song` (one-shot handoff).
+local function RequestChartRestore(song)
+	if not song then return end
+	local refs = Session().ChartBySong[song:GetSongDir()]
+	if refs then
+		local pending = { SongDir = song:GetSongDir() }
+		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do pending[pn] = refs[pn] end
+		GAMESTATE:Env()["LuaWheelChartRestore"] = pending
+	else
+		GAMESTATE:Env()["LuaWheelChartRestore"] = nil
+	end
 end
 
 local function BuildFolderEntries()
@@ -233,6 +264,8 @@ local function SetSelection(index)
 		if CurrentGroup then
 			session.BucketMemory[CurrentGroup] = entry:GetSongDir()
 		end
+		-- Restore this side's previously chosen charts for this song, if any.
+		RequestChartRestore(entry)
 	end
 	session.View = { Bucket = CurrentGroup, Index = CurrentIndex }
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
@@ -297,6 +330,8 @@ end
 local function StartGameplay()
 	if Transitioning then return end
 	Transitioning = true
+	-- Save each side's chosen chart before leaving, so difficulty can be restored.
+	CaptureCharts(GAMESTATE:GetCurrentSong())
 	-- Required, or the transition crashes (see BasicChartDisplay.lua).
 	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
 	GAMESTATE:SetCurrentStyle(GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single")
