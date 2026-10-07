@@ -40,9 +40,10 @@ end
 
 -- Case-insensitive title sort used within every bucket (case tie-break for stability).
 local function TitleLess(a, b)
-	local ta, tb = a:GetDisplayFullTitle():lower(), b:GetDisplayFullTitle():lower()
-	if ta ~= tb then return ta < tb end
-	return a:GetDisplayFullTitle() < b:GetDisplayFullTitle()
+	local fa, fb = a:GetDisplayFullTitle() or "", b:GetDisplayFullTitle() or ""
+	local la, lb = fa:lower(), fb:lower()
+	if la ~= lb then return la < lb end
+	return fa < fb
 end
 
 -- Case-insensitive name sort (case tie-break, so K-POP vs K-Pop is deterministic).
@@ -69,7 +70,7 @@ local function BuildData()
 	local genreSongs = {}
 	local allPlayable = {}
 
-	for Song in ivalues(SONGMAN:GetAllSongs()) do
+	for Song in ivalues(SONGMAN:GetAllSongs() or {}) do
 		if #SongUtil.GetPlayableSteps(Song) > 0 then
 			allPlayable[#allPlayable+1] = Song
 
@@ -459,10 +460,12 @@ local function StyleForSelection()
 	local pn = PrimaryPlayer()
 	local steps = pn and GAMESTATE:GetCurrentSteps(pn)
 	if not steps or not GAMEMAN then return nil end
+	local game = GAMESTATE:GetCurrentGame()
+	if not game then return nil end
 	local wantType = steps:GetStepsType()
 	local wantVersus = GAMESTATE:GetNumSidesJoined() > 1
 	local fallback
-	for _, style in ipairs(GAMEMAN:GetStylesForGame(GAMESTATE:GetCurrentGame():GetName())) do
+	for _, style in ipairs(GAMEMAN:GetStylesForGame(game:GetName())) do
 		if style:GetStepsType() == wantType then
 			local isVersus = ToEnumShortString(style:GetStyleType()) == "TwoPlayersTwoSides"
 			if isVersus == wantVersus then return style:GetName() end
