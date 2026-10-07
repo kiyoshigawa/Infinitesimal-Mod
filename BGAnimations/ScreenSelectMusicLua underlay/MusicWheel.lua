@@ -512,13 +512,9 @@ local function InputHandler(event)
 	if event.type == "InputEventType_Release" then return end
 	local button = event.button
 
-	-- If an unjoined player attempts to join and has enough credits, join them
-	if (button == "Center" or (not IsGame("pump") and button == "Start")) and
-		not GAMESTATE:IsSideJoined(pn) and GAMESTATE:GetCoins() >= GAMESTATE:GetCoinsNeededToJoin() then
-		GAMESTATE:JoinPlayer(pn)
-		GAMESTATE:InsertCoin(-(GAMESTATE:GetCoinsNeededToJoin()))
-		MESSAGEMAN:Broadcast("PlayerJoined", { Player = pn })
-	end
+	-- If an unjoined player presses a join button and can afford it, join them and
+	-- stop here so the same press doesn't also trigger the stage action below.
+	if JoinUtils.TryJoin(pn, button) then return end
 
 	-- To avoid control from a player that has not joined, filter the inputs out
 	if pn == PLAYER_1 and not GAMESTATE:IsPlayerEnabled(PLAYER_1) then return end

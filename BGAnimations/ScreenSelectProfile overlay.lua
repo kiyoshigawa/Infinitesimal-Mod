@@ -267,9 +267,9 @@ local function InputHandler(event)
 
     local button = event.button
     if button == "Start" or button == "Center" then
-        MESSAGEMAN:Broadcast("StartButton")
         if not GAMESTATE:IsHumanPlayer(pn) then
             -- First joiner picks up its saved profile; later joiners start on Guest.
+            MESSAGEMAN:Broadcast("StartButton")
             profileIndex[pn] = (GAMESTATE:GetNumPlayersEnabled() == 0) and SavedProfileIndex(pn) or 0
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
@@ -281,6 +281,7 @@ local function InputHandler(event)
                 MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
             else
                 Ready[pn] = true
+                MESSAGEMAN:Broadcast("StartButton")
                 MESSAGEMAN:Broadcast("ProfileLocked", { Player = pn })
                 -- Push this side's choice to the engine and persist it for next boot.
                 SetProfileIndexLocal(pn, profileIndex[pn])
@@ -315,28 +316,18 @@ local function InputHandler(event)
         end
 
     elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
-        -- Back: unlock this side if it is locked; otherwise step only THIS side
-        -- back a level -- never drag the other side along to the title screen.
+        -- Back: unlock this side if it is locked. A joined side never drops back
+        -- to the "press center to join" prompt (that resurrects the join graphic),
+        -- so while the other side is engaged an unlocked press just gets the locked
+        -- error. Only a side with nothing else engaged may leave the screen.
         if Ready[pn] then
             Ready[pn] = false
             MESSAGEMAN:Broadcast("ProfileUnlocked", { Player = pn })
         else
             local other = (pn == PLAYER_1) and PLAYER_2 or PLAYER_1
-            local selfJoined = GAMESTATE:IsHumanPlayer(pn)
-            local otherJoined = GAMESTATE:IsHumanPlayer(other)
-            if otherJoined then
-                if selfJoined then
-                    -- Two players in select mode: drop only this side back to the
-                    -- "press center to join" prompt (which re-accepts Center/Start).
-                    profileIndex[pn] = 0
-                    SCREENMAN:GetTopScreen():SetProfileIndex(pn, -2)
-                else
-                    -- Sitting on the join prompt while the other side is engaged:
-                    -- do nothing but play the locked error sound.
-                    MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
-                end
+            if GAMESTATE:IsHumanPlayer(other) then
+                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
             else
-                -- Sole (or no) joined player: leave the screen.
                 SCREENMAN:GetTopScreen():Cancel()
             end
         end
@@ -346,7 +337,29 @@ end
 local t = Def.ActorFrame {
     OnCommand=function(self)
         SCREENMAN:GetTopScreen():AddInputCallback(InputHandler)
+        -- Defer so all child actors exist before we broadcast ProfileLocked, and
+        -- so the scroller sees the pre-set index.
+        self:queuecommand("PreLockSignedInPlayers")
         self:queuecommand("UpdateInternal2")
+    end,
+
+    -- When this screen is opened mid-session because the other side joined on the
+    -- music wheel, the already-signed-in side keeps its profile and starts locked;
+    -- the freshly-joined side starts fresh on Guest, unlocked. (At boot, no side is
+    -- signed in yet and JoinUtils.LastJoinedPlayer is nil, so nothing changes.)
+    PreLockSignedInPlayersCommand=function(self)
+        local newJoin = JoinUtils.LastJoinedPlayer
+        JoinUtils.LastJoinedPlayer = nil
+        if not newJoin then return end
+        for pn in ivalues({ PLAYER_1, PLAYER_2 }) do
+            if pn ~= newJoin and GAMESTATE:IsHumanPlayer(pn)
+                and MEMCARDMAN:GetCardState(pn) == "MemoryCardState_none" then
+                if SetProfileIndexLocal(pn, SavedProfileIndex(pn)) then
+                    Ready[pn] = true
+                    MESSAGEMAN:Broadcast("ProfileLocked", { Player = pn })
+                end
+            end
+        end
     end,
 
     StorageDevicesChangedMessageCommand=function(self)

@@ -37,7 +37,19 @@ return Def.ActorFrame {
     Def.Sprite {
         Texture=THEME:GetPathG("", "CornerArrows/ShiftDL"),
         OnCommand=function(self) self:zoom(0.5):xy(-72, SCREEN_BOTTOM + 72):easeoutexpo(1):xy(72, SCREEN_BOTTOM - 72) end,
-        OffCommand=function(self) self:stoptweening():easeoutexpo(1):xy(-72, SCREEN_BOTTOM + 72) end
+        OffCommand=function(self) self:stoptweening():easeoutexpo(1):xy(-72, SCREEN_BOTTOM + 72) end,
+        -- Profile-select lock: swap this arrow for the gold glow arrow in place, so
+        -- the locked side reads clearly and nothing can draw over it.
+        ProfileLockedMessageCommand=function(self, params)
+            if params and params.Player == PLAYER_1 then
+                self:Load(THEME:GetPathG("", "CornerArrows/GlowShiftDL")):diffuse(1, 0.82, 0.25, 1)
+            end
+        end,
+        ProfileUnlockedMessageCommand=function(self, params)
+            if not params or not params.Player or params.Player == PLAYER_1 then
+                self:Load(THEME:GetPathG("", "CornerArrows/ShiftDL")):diffuse(1, 1, 1, 1)
+            end
+        end
     },
 
     Def.Sprite {
@@ -55,7 +67,18 @@ return Def.ActorFrame {
     Def.Sprite {
         Texture=THEME:GetPathG("", "CornerArrows/ShiftDR"),
         OnCommand=function(self) self:zoom(0.5):xy(SCREEN_RIGHT + 72, SCREEN_BOTTOM + 72):easeoutexpo(1):xy(SCREEN_RIGHT - 72, SCREEN_BOTTOM - 72) end,
-        OffCommand=function(self) self:stoptweening():easeoutexpo(1):xy(SCREEN_RIGHT + 72, SCREEN_BOTTOM + 72) end
+        OffCommand=function(self) self:stoptweening():easeoutexpo(1):xy(SCREEN_RIGHT + 72, SCREEN_BOTTOM + 72) end,
+        -- Profile-select lock: swap this arrow for the gold glow arrow in place.
+        ProfileLockedMessageCommand=function(self, params)
+            if params and params.Player == PLAYER_2 then
+                self:Load(THEME:GetPathG("", "CornerArrows/GlowShiftDR")):diffuse(1, 0.82, 0.25, 1)
+            end
+        end,
+        ProfileUnlockedMessageCommand=function(self, params)
+            if not params or not params.Player or params.Player == PLAYER_2 then
+                self:Load(THEME:GetPathG("", "CornerArrows/ShiftDR")):diffuse(1, 1, 1, 1)
+            end
+        end
     },
 
     Def.Sprite {
