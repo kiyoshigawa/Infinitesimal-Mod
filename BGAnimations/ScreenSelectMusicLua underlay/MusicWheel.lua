@@ -103,7 +103,6 @@ local function SetSelection(index)
 		end
 	end
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
-	Trace("LuaWheel selection: " .. tostring(type(entry) == "string" and entry or (entry and entry:GetDisplayFullTitle()) or "nil"))
 end
 
 local function Move(delta)
@@ -274,16 +273,6 @@ local t = Def.ActorFrame {
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
 		-- Defer the first selection until the screen/chrome are fully built.
 		self:sleep(0.1):queuecommand("InitialSelection")
-		-- TEMP diagnostic: is a profile assigned to each joined side?
-		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
-			local prof = PROFILEMAN:GetProfile(pn)
-			Trace(string.format("LuaWheel profile %s: name='%s' persistent=%s human=%s localProfiles=%d",
-				ToEnumShortString(pn),
-				prof and prof:GetDisplayName() or "nil",
-				tostring(PROFILEMAN:IsPersistentProfile(pn)),
-				tostring(GAMESTATE:IsHumanPlayer(pn)),
-				PROFILEMAN:GetNumLocalProfiles()))
-		end
 	end,
 
 	InitialSelectionCommand=function(self)
