@@ -143,12 +143,13 @@ local SESSION_SCHEMA = 1
 local function Session()
 	local s = LuaWheelSession
 	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
-		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, ChartBySong = {} }
+		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, ChartBySong = {}, Seeded = false }
 		LuaWheelSession = s
 	end
 	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
 	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
 	if type(s.ChartBySong) ~= "table" then s.ChartBySong = {} end
+	if s.Seeded == nil then s.Seeded = false end
 	return s
 end
 
@@ -189,6 +190,120 @@ local function RequestChartRestore(song)
 	else
 		GAMESTATE:Env()["LuaWheelChartRestore"] = nil
 	end
+end
+
+-- ------------------------------------------------- durable resume state -----
+-- Per-profile resume record in Save/LocalProfiles/<id>/ResumeState.ini (dedicated
+-- file, written via Config.Save so it never rewrites prefs the engine owns).
+local RESUME_SCHEMA = 1
+
+local function IndexOfSongIn(list, dir)
+	for i = 1, #list do
+		if list[i]:GetSongDir() == dir then return i end
+	end
+	return nil
+end
+
+-- Profile directory for a persistent profile, else nil (guest / no profile).
+local function ProfileDirFor(pn)
+	if not pn or not PROFILEMAN:IsPersistentProfile(pn) then return nil end
+	local slot = tonumber(string.sub(pn, -1)) - 1 -- PlayerNumber_P1 -> ProfileSlot 0
+	local dir = PROFILEMAN:GetProfileDir(slot)
+	if not dir or dir == "" then return nil end
+	return dir
+end
+
+-- Seed player: the master player if it has a profile, else any other enabled
+-- profile ("profile beats guest"); nil when everyone is a guest.
+local function SeedPlayer()
+	local master = GAMESTATE:GetMasterPlayerNumber()
+	if master and PROFILEMAN:IsPersistentProfile(master) then return master end
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) and PROFILEMAN:IsPersistentProfile(pn) then return pn end
+	end
+	return nil
+end
+
+local function LoadResume(dir)
+	if not dir then return nil end
+	local path = dir .. "/ResumeState.ini"
+	local function get(k) return LoadModule("Config.Load.lua")(k, path) end
+	if tonumber(get("WheelSchema") or 0) ~= RESUME_SCHEMA then return nil end
+	local kind, name = get("WheelBucketKind"), get("WheelBucketName")
+	local song = get("WheelSongDir")
+	if type(kind) ~= "string" or type(name) ~= "string" then return nil end
+	if type(song) ~= "string" or song == "" then return nil end
+	local key, diff = get("WheelChartKey"), get("WheelDifficulty")
+	return {
+		Bucket = BucketKey(kind, name),
+		SongDir = song,
+		ChartKey = type(key) == "string" and key or nil,
+		Difficulty = type(diff) == "string" and diff or nil,
+	}
+end
+
+local function SaveResume(dir, bucketKey, songDir, chartRef)
+	if not dir then return end
+	local path = dir .. "/ResumeState.ini"
+	local info = GroupInfo[bucketKey]
+	local save = LoadModule("Config.Save.lua")
+	save("WheelSchema", tostring(RESUME_SCHEMA), path)
+	save("WheelBucketKind", info and info.Kind or "", path)
+	save("WheelBucketName", info and info.Name or "", path)
+	save("WheelSongDir", songDir or "", path)
+	save("WheelChartKey", (chartRef and chartRef.Key) or "", path)
+	save("WheelDifficulty", (chartRef and chartRef.Difficulty) or "", path)
+end
+
+local function SaveResumeForProfiles()
+	local song = GAMESTATE:GetCurrentSong()
+	if not song or not CurrentGroup or not GroupInfo[CurrentGroup] then return end
+	local songDir = song:GetSongDir()
+	local refs = Session().ChartBySong[songDir] or {}
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) then
+			local dir = ProfileDirFor(pn)
+			if dir then SaveResume(dir, CurrentGroup, songDir, refs[pn]) end
+		end
+	end
+end
+
+-- On the first entry of a run, restore the seed profile's last bucket/song/chart.
+local function SeedFromProfile(session)
+	session.BucketMemory = {}
+	session.ChartBySong = {}
+	session.View = { Bucket = nil, Index = 1 } -- default: folder level, first bucket
+
+	local seedPn = SeedPlayer()
+	local rec = LoadResume(ProfileDirFor(seedPn))
+	if not rec then return end
+
+	local songs = SongsByGroup[rec.Bucket]
+	local idx = songs and IndexOfSongIn(songs, rec.SongDir) or nil
+	if idx then
+		session.View = { Bucket = rec.Bucket, Index = idx }
+	elseif songs and #songs > 0 then
+		session.View = { Bucket = rec.Bucket, Index = 1 }
+	else
+		return -- bucket gone/empty: stay at the default folder position
+	end
+
+	-- Chart refs for the seeded song: seed side from its record; the other side from
+	-- its own record if it names the same song, else its difficulty enum only.
+	local refs = {}
+	refs[seedPn] = { Key = rec.ChartKey, Difficulty = rec.Difficulty }
+	local otherPn = (seedPn == PLAYER_1) and PLAYER_2 or PLAYER_1
+	if GAMESTATE:IsPlayerEnabled(otherPn) then
+		local otherRec = LoadResume(ProfileDirFor(otherPn))
+		if otherRec then
+			if otherRec.SongDir == rec.SongDir then
+				refs[otherPn] = { Key = otherRec.ChartKey, Difficulty = otherRec.Difficulty }
+			else
+				refs[otherPn] = { Difficulty = otherRec.Difficulty }
+			end
+		end
+	end
+	session.ChartBySong[rec.SongDir] = refs
 end
 
 local function BuildFolderEntries()
@@ -330,8 +445,10 @@ end
 local function StartGameplay()
 	if Transitioning then return end
 	Transitioning = true
-	-- Save each side's chosen chart before leaving, so difficulty can be restored.
+	-- Save each side's chosen chart before leaving, so difficulty can be restored,
+	-- and persist each joined profile's resume record.
 	CaptureCharts(GAMESTATE:GetCurrentSong())
+	SaveResumeForProfiles()
 	-- Required, or the transition crashes (see BasicChartDisplay.lua).
 	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
 	GAMESTATE:SetCurrentStyle(GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single")
@@ -420,7 +537,12 @@ end
 -- Re-entering the screen (e.g. after finishing a song) should resume where we left
 -- off.  Position lives in the GAMESTATE:Env() session table, so it survives screen
 -- entries within a run and resets on the next launch.
-local view = Session().View
+local session = Session()
+if not session.Seeded then
+	SeedFromProfile(session)
+	session.Seeded = true
+end
+local view = session.View
 if type(view.Bucket) == "string" and SongsByGroup[view.Bucket] then
 	CurrentGroup = view.Bucket
 	BuildSongEntries(CurrentGroup)
