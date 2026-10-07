@@ -315,12 +315,30 @@ local function InputHandler(event)
         end
 
     elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
-        -- Back out one step: unlock the side, otherwise leave the screen.
+        -- Back: unlock this side if it is locked; otherwise step only THIS side
+        -- back a level -- never drag the other side along to the title screen.
         if Ready[pn] then
             Ready[pn] = false
             MESSAGEMAN:Broadcast("ProfileUnlocked", { Player = pn })
         else
-            SCREENMAN:GetTopScreen():Cancel()
+            local other = (pn == PLAYER_1) and PLAYER_2 or PLAYER_1
+            local selfJoined = GAMESTATE:IsHumanPlayer(pn)
+            local otherJoined = GAMESTATE:IsHumanPlayer(other)
+            if otherJoined then
+                if selfJoined then
+                    -- Two players in select mode: drop only this side back to the
+                    -- "press center to join" prompt (which re-accepts Center/Start).
+                    profileIndex[pn] = 0
+                    SCREENMAN:GetTopScreen():SetProfileIndex(pn, -2)
+                else
+                    -- Sitting on the join prompt while the other side is engaged:
+                    -- do nothing but play the locked error sound.
+                    MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
+                end
+            else
+                -- Sole (or no) joined player: leave the screen.
+                SCREENMAN:GetTopScreen():Cancel()
+            end
         end
     end
 end
@@ -343,6 +361,7 @@ local t = Def.ActorFrame {
         -- Treat an unjoin as if the side never joined: clear its lock and unglow.
         if params and params.Player then
             Ready[params.Player] = false
+            profileIndex[params.Player] = 0
             MESSAGEMAN:Broadcast("ProfileUnlocked", { Player = params.Player })
         end
         self:queuecommand("UpdateInternal2")
