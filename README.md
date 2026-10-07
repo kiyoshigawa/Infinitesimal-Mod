@@ -17,6 +17,38 @@ Since this theme is currently on a rolling release, we highly recommend download
 
 **If you are upgrading from a previous version by `Download ZIP`, fully delete the old folder first. Do not merge the new folder into the old.**
 
+## Running with OutFox (manual setup)
+
+This mod (**`Infinitesimal-Mod`**) adds a theme-owned song-select screen with StepF2-style buckets. It's gated behind a preference, so a few settings must be edited by hand. Install this repo as a folder named `Infinitesimal-Mod` inside your OutFox `Themes` directory, then, with OutFox closed:
+
+**1. Enable the mod's song wheel** — `Save/OutFoxPrefs.ini`:
+
+```ini
+LuaMusicWheel=true
+BasicMode=false
+```
+
+(`LuaMusicWheel=false` loads the stock `ScreenSelectMusic` instead of this mod's `ScreenSelectMusicLua`.)
+
+**2. Point OutFox at the theme** — `Save/Preferences.ini`, on every `Theme=`/`DefaultTheme=` line (several sections):
+
+```ini
+Theme=Infinitesimal-Mod
+DefaultTheme=Infinitesimal-Mod
+CurrentGame=pump
+```
+
+**3. Recommended** — same file:
+
+```ini
+ShowThemeErrors=1        ; surface theme Lua errors on-screen
+NumSongLoadThreads=1     ; avoids a song-cache write race on the first scan
+```
+
+**4. Profiles** — keep at least one profile under `Save/LocalProfiles/<id>/`; with none present, OutFox skips the profile-select screen entirely.
+
+Start OutFox once so the song cache rebuilds, and let it finish; exit via the menu (not by killing the process) so the cache is saved.
+
 ## Theme Features
 * Accurate timing windows scoring and lifebar mechanics to K-Pump
 * Additional timing windows available (StepMania, ITG, Infinity, Pro, Jump)
