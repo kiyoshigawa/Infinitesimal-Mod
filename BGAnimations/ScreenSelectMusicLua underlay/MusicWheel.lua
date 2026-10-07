@@ -163,7 +163,24 @@ local function IndexOfSongDir(dir)
 	return nil
 end
 
--- Remember each joined side's chart for a song, so difficulty can be restored later.
+-- Profile directory for a persistent profile, else nil (guest / no profile).
+local function ProfileDirFor(pn)
+	if not pn or not PROFILEMAN:IsPersistentProfile(pn) then return nil end
+	local slot = tonumber(string.sub(pn, -1)) - 1 -- PlayerNumber_P1 -> ProfileSlot 0
+	local dir = PROFILEMAN:GetProfileDir(slot)
+	if not dir or dir == "" then return nil end
+	return dir
+end
+
+-- Difficulty memory is keyed by profile identity, not P1/P2, so a profile keeps its
+-- chart choice whichever side it plays on. Guests (no profile) stay per-side.
+local function SideKey(pn)
+	local dir = ProfileDirFor(pn)
+	if dir then return "profile:" .. dir end
+	return "guest:" .. tostring(pn)
+end
+
+-- Remember each joined side's chart for a song (keyed by profile), for restore later.
 local function CaptureCharts(song)
 	if not song then return end
 	local refs = {}
@@ -171,7 +188,7 @@ local function CaptureCharts(song)
 		if GAMESTATE:IsPlayerEnabled(pn) then
 			local steps = GAMESTATE:GetCurrentSteps(pn)
 			if steps then
-				refs[pn] = { Key = steps:GetChartKey(), Difficulty = ToEnumShortString(steps:GetDifficulty()) }
+				refs[SideKey(pn)] = { Key = steps:GetChartKey(), Difficulty = ToEnumShortString(steps:GetDifficulty()) }
 			end
 		end
 	end
@@ -180,13 +197,14 @@ local function CaptureCharts(song)
 	end
 end
 
--- Ask ChartDisplay to restore saved per-side charts for `song` (one-shot handoff).
+-- Ask ChartDisplay to restore saved charts for `song` (one-shot handoff), matching
+-- each current side to its own profile's saved choice.
 local function RequestChartRestore(song)
 	if not song then return end
 	local refs = Session().ChartBySong[song:GetSongDir()]
 	if refs then
 		local pending = { SongDir = song:GetSongDir() }
-		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do pending[pn] = refs[pn] end
+		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do pending[pn] = refs[SideKey(pn)] end
 		GAMESTATE:Env()["LuaWheelChartRestore"] = pending
 	else
 		GAMESTATE:Env()["LuaWheelChartRestore"] = nil
@@ -203,15 +221,6 @@ local function IndexOfSongIn(list, dir)
 		if list[i]:GetSongDir() == dir then return i end
 	end
 	return nil
-end
-
--- Profile directory for a persistent profile, else nil (guest / no profile).
-local function ProfileDirFor(pn)
-	if not pn or not PROFILEMAN:IsPersistentProfile(pn) then return nil end
-	local slot = tonumber(string.sub(pn, -1)) - 1 -- PlayerNumber_P1 -> ProfileSlot 0
-	local dir = PROFILEMAN:GetProfileDir(slot)
-	if not dir or dir == "" then return nil end
-	return dir
 end
 
 -- Seed player: the master player if it has a profile, else any other enabled
@@ -264,7 +273,7 @@ local function SaveResumeForProfiles()
 	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
 		if GAMESTATE:IsPlayerEnabled(pn) then
 			local dir = ProfileDirFor(pn)
-			if dir then SaveResume(dir, CurrentGroup, songDir, refs[pn]) end
+			if dir then SaveResume(dir, CurrentGroup, songDir, refs[SideKey(pn)]) end
 		end
 	end
 end
@@ -292,15 +301,15 @@ local function SeedFromProfile(session)
 	-- Chart refs for the seeded song: seed side from its record; the other side from
 	-- its own record if it names the same song, else its difficulty enum only.
 	local refs = {}
-	refs[seedPn] = { Key = rec.ChartKey, Difficulty = rec.Difficulty }
+	refs[SideKey(seedPn)] = { Key = rec.ChartKey, Difficulty = rec.Difficulty }
 	local otherPn = (seedPn == PLAYER_1) and PLAYER_2 or PLAYER_1
 	if GAMESTATE:IsPlayerEnabled(otherPn) then
 		local otherRec = LoadResume(ProfileDirFor(otherPn))
 		if otherRec then
 			if otherRec.SongDir == rec.SongDir then
-				refs[otherPn] = { Key = otherRec.ChartKey, Difficulty = otherRec.Difficulty }
+				refs[SideKey(otherPn)] = { Key = otherRec.ChartKey, Difficulty = otherRec.Difficulty }
 			else
-				refs[otherPn] = { Difficulty = otherRec.Difficulty }
+				refs[SideKey(otherPn)] = { Difficulty = otherRec.Difficulty }
 			end
 		end
 	end
