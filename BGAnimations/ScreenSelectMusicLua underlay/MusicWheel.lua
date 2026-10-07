@@ -132,6 +132,34 @@ local SongIsChosen = false
 local Confirmed = {}        -- PlayerNumber -> true once that side has confirmed
 local Transitioning = false -- one-shot guard for the gameplay transition
 
+-- ---------------------------------------------------------- session --------
+-- Session state lives in GAMESTATE:Env() (same table as getenv/setenv): it survives
+-- screen entries within a run and is fresh on each launch (event mode never hits the
+-- GameState-resetting screens).  `BucketMemory` remembers the last song per bucket;
+-- `View` remembers where the wheel was left so re-entry resumes there.
+local SESSION_KEY = "LuaWheelSession"
+local SESSION_SCHEMA = 1
+
+local function Session()
+	local s = GAMESTATE:Env()[SESSION_KEY]
+	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
+		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 } }
+		GAMESTATE:Env()[SESSION_KEY] = s
+	end
+	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
+	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
+	return s
+end
+
+-- Index of a song in the active Entries by its stable directory id (nil if absent).
+local function IndexOfSongDir(dir)
+	for i = 1, #Entries do
+		local e = Entries[i]
+		if type(e) ~= "string" and e:GetSongDir() == dir then return i end
+	end
+	return nil
+end
+
 local function BuildFolderEntries()
 	Entries = {}
 	for i = 1, #GroupList do Entries[i] = GroupList[i] end
@@ -185,17 +213,18 @@ end
 local function SetSelection(index)
 	CurrentIndex = index
 	local entry = Entries[CurrentIndex]
+	local session = Session()
 	if type(entry) == "string" then
 		local songs = SongsByGroup[entry]
 		if songs and songs[1] then GAMESTATE:SetCurrentSong(songs[1]) end
 	elseif entry then
 		GAMESTATE:SetCurrentSong(entry)
-		-- Remember where we are at song level so we can return here after gameplay.
+		-- Remember this song for the bucket we're in, so re-entering it resumes here.
 		if CurrentGroup then
-			LuaWheelLastGroup = CurrentGroup
-			LuaWheelLastIndex = CurrentIndex
+			session.BucketMemory[CurrentGroup] = entry:GetSongDir()
 		end
 	end
+	session.View = { Bucket = CurrentGroup, Index = CurrentIndex }
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
 end
 
@@ -212,7 +241,8 @@ end
 local function EnterGroup(group)
 	CurrentGroup = group
 	BuildSongEntries(group)
-	CurrentIndex = 1
+	-- Resume this bucket's last-visited song if we have one, else start at the top.
+	CurrentIndex = IndexOfSongDir(Session().BucketMemory[group]) or 1
 	SetSelection(CurrentIndex)
 	UpdateItemTargets(CurrentIndex)
 	MESSAGEMAN:Broadcast("Rebuild")
@@ -342,18 +372,19 @@ local function InputHandler(event)
 end
 
 -- --------------------------------------------------------------- actor ------
--- Re-entering the screen (e.g. after finishing a song) should land on the group
--- and song we left off on, not reset to the folder list. Position is kept in
--- globals because this file is re-run for each screen instance.
-if type(LuaWheelLastGroup) == "string" and SongsByGroup[LuaWheelLastGroup] then
-	CurrentGroup = LuaWheelLastGroup
+-- Re-entering the screen (e.g. after finishing a song) should resume where we left
+-- off.  Position lives in the GAMESTATE:Env() session table, so it survives screen
+-- entries within a run and resets on the next launch.
+local view = Session().View
+if type(view.Bucket) == "string" and SongsByGroup[view.Bucket] then
+	CurrentGroup = view.Bucket
 	BuildSongEntries(CurrentGroup)
-	CurrentIndex = tonumber(LuaWheelLastIndex) or 1
-	if CurrentIndex < 1 or CurrentIndex > #Entries then CurrentIndex = 1 end
 else
+	CurrentGroup = nil
 	BuildFolderEntries()
-	CurrentIndex = 1
 end
+CurrentIndex = tonumber(view.Index) or 1
+if CurrentIndex < 1 or CurrentIndex > #Entries then CurrentIndex = 1 end
 UpdateItemTargets(CurrentIndex)
 
 local t = Def.ActorFrame {
@@ -461,9 +492,6 @@ for i = 1, WheelSize do
 		end,
 
 		ScrollMessageCommand=function(self,param)
-			-- Save this so that we can resume the last selection after gameplay
-			LastSongIndex = CurrentIndex
-
 			self:stoptweening()
 
 			-- Calculate position
