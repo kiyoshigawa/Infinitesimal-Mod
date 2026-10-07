@@ -273,18 +273,26 @@ local function InputHandler(event)
             profileIndex[pn] = (GAMESTATE:GetNumPlayersEnabled() == 0) and SavedProfileIndex(pn) or 0
             SCREENMAN:GetTopScreen():SetProfileIndex(pn, -1)
         else
-            Ready[pn] = true
-            MESSAGEMAN:Broadcast("ProfileLocked", { Player = pn })
-            -- Push this side's choice to the engine and persist it for next boot.
-            SetProfileIndexLocal(pn, profileIndex[pn])
-            if profileIndex[pn] > 0 then
-                PREFSMAN:SetPreference(ProfilePrefKey(pn), PROFILEMAN:GetLocalProfileIDFromIndex(profileIndex[pn] - 1))
+            -- A profile the other side has already locked cannot be locked here.
+            local other = (pn == PLAYER_1) and PLAYER_2 or PLAYER_1
+            local taken = Ready[other] and profileIndex[other] > 0 and profileIndex[other] == profileIndex[pn]
+            if taken then
+                Ready[pn] = false
+                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
             else
-                PREFSMAN:SetPreference(ProfilePrefKey(pn), "")
-            end
-            if AllReady() then
-                setenv("IsBasicMode", false)
-                SCREENMAN:GetTopScreen():Finish()
+                Ready[pn] = true
+                MESSAGEMAN:Broadcast("ProfileLocked", { Player = pn })
+                -- Push this side's choice to the engine and persist it for next boot.
+                SetProfileIndexLocal(pn, profileIndex[pn])
+                if profileIndex[pn] > 0 then
+                    PREFSMAN:SetPreference(ProfilePrefKey(pn), PROFILEMAN:GetLocalProfileIDFromIndex(profileIndex[pn] - 1))
+                else
+                    PREFSMAN:SetPreference(ProfilePrefKey(pn), "")
+                end
+                if AllReady() then
+                    setenv("IsBasicMode", false)
+                    SCREENMAN:GetTopScreen():Finish()
+                end
             end
         end
 
