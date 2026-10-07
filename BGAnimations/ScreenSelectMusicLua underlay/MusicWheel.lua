@@ -161,17 +161,22 @@ local function UpdateItem(self, entry)
 		if info and info.Kind == "folder" then
 			local path = SONGMAN:GetSongGroupBannerPath(info.Name)
 			if path == "" then banner:Load(nil) else banner:Load(path) end
+			banner:visible(true)
 		else
-			-- Synthetic buckets are text-only for now.
+			-- Synthetic buckets are text-only: clear AND hide the banner so no
+			-- previously-loaded song art can linger on the tile.
 			banner:Load(nil)
+			banner:visible(false)
 		end
 		banner:scaletoclipped(WheelItem.Width, WheelItem.Height)
 		name:settext(info and info.Name or "")
 	elseif entry then
 		banner:LoadFromSongBanner(entry):scaletoclipped(WheelItem.Width, WheelItem.Height)
+		banner:visible(true)
 		name:settext("")
 	else
 		banner:Load(nil)
+		banner:visible(false)
 		name:settext("")
 	end
 end
@@ -521,7 +526,7 @@ for i = 1, WheelSize do
 				InitCommand=function(self)
 					self:addy(-50):zoom(0.4):skewx(-0.1):diffusetopedge(0.95,0.95,0.95,0.8):shadowlength(1.5)
 				end,
-				RefreshCommand=function(self,param) self:settext(Targets[slot]) end
+				RefreshCommand=function(self,param) self:settext(Targets[i]) end
 			}
 		}
 	}
