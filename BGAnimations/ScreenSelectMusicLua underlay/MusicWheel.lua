@@ -7,7 +7,8 @@
 -- The chrome (preview/video, song info, difficulty list, scores) follows the
 -- highlighted entry; a highlighted folder previews its first playable song.
 --
--- Synthetic buckets (All Songs / K-Pop / ...) will be added to GroupList later.
+-- Top-level entries are "buckets": custom (All Songs, ...) -> genre (A-Z) ->
+-- mix folders (A-Z).  See the data section below.
 --
 -- Adapted from BGAnimations/ScreenSelectMusicBasic underlay/MusicWheel.lua
 
@@ -18,23 +19,105 @@ local WheelSpacing = 250
 local WheelRotation = 0.1
 
 -- ---------------------------------------------------------------- data ------
-local GroupList = {}      -- ordered folder names
-local SongsByGroup = {}   -- folder name -> { playable Song, ... }
+-- Top-level entries are "buckets", computed here from SONGMAN:
+--   * custom buckets  (registry below; e.g. All Songs)
+--   * genre buckets   (derived from Song:GetGenre(); empty skipped)
+--   * mix folders     (physical Songs/ groups)
+-- Fixed order: custom -> genre (A-Z) -> mix folders (A-Z).
+local GroupList = {}      -- ordered bucket keys
+local SongsByGroup = {}   -- bucket key -> { playable Song, ... }
+local GroupInfo = {}      -- bucket key -> { Kind, Name, Songs }
+
+local function BucketKey(kind, name)
+	return kind .. ":" .. name
+end
+
+-- Trim surrounding whitespace (genre tags can carry CR/LF/space from the simfile).
+local function Trim(s)
+	if type(s) ~= "string" then return "" end
+	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- Case-insensitive title sort used within every bucket (case tie-break for stability).
+local function TitleLess(a, b)
+	local ta, tb = a:GetDisplayFullTitle():lower(), b:GetDisplayFullTitle():lower()
+	if ta ~= tb then return ta < tb end
+	return a:GetDisplayFullTitle() < b:GetDisplayFullTitle()
+end
+
+-- Case-insensitive name sort (case tie-break, so K-POP vs K-Pop is deterministic).
+local function NameLess(a, b)
+	local la, lb = a:lower(), b:lower()
+	if la ~= lb then return la < lb end
+	return a < b
+end
+
+-- Custom bucket registry. Adding a bucket is a one-liner:
+--   { Name = "Short Songs", Predicate = function(song) return song:MusicLengthSeconds() < 90 end },
+local CustomBuckets = {
+	{ Name = "All Songs", Predicate = function(song) return true end },
+}
 
 local function BuildData()
 	GroupList = {}
 	SongsByGroup = {}
-	for Group in ivalues(SONGMAN:GetSongGroupNames()) do
-		local playable = {}
-		for Song in ivalues(SONGMAN:GetSongsInGroup(Group)) do
-			if #SongUtil.GetPlayableSteps(Song) > 0 then
-				playable[#playable+1] = Song
+	GroupInfo = {}
+
+	-- Single pass: collect playable songs once, grouped by folder and by genre.
+	local folderNames = {}
+	local folderSongs = {}
+	local genreSongs = {}
+	local allPlayable = {}
+
+	for Song in ivalues(SONGMAN:GetAllSongs()) do
+		if #SongUtil.GetPlayableSteps(Song) > 0 then
+			allPlayable[#allPlayable+1] = Song
+
+			local folder = Song:GetGroupName()
+			if not folderSongs[folder] then
+				folderSongs[folder] = {}
+				folderNames[#folderNames+1] = folder
+			end
+			folderSongs[folder][#folderSongs[folder]+1] = Song
+
+			local genre = Trim(Song:GetGenre())
+			if genre ~= "" then
+				if not genreSongs[genre] then genreSongs[genre] = {} end
+				genreSongs[genre][#genreSongs[genre]+1] = Song
 			end
 		end
-		if #playable > 0 then
-			GroupList[#GroupList+1] = Group
-			SongsByGroup[Group] = playable
+	end
+
+	local function AddBucket(kind, name, songs)
+		if #songs == 0 then return end
+		table.sort(songs, TitleLess)
+		local key = BucketKey(kind, name)
+		GroupList[#GroupList+1] = key
+		SongsByGroup[key] = songs
+		GroupInfo[key] = { Kind = kind, Name = name, Songs = songs }
+	end
+
+	-- 1. Custom buckets (registry order), evaluated over all playable songs.
+	for _, def in ipairs(CustomBuckets) do
+		local songs = {}
+		for _, song in ipairs(allPlayable) do
+			if def.Predicate(song) then songs[#songs+1] = song end
 		end
+		AddBucket("custom", def.Name, songs)
+	end
+
+	-- 2. Genre buckets, alphabetical, empty skipped.
+	local genreNames = {}
+	for name in pairs(genreSongs) do genreNames[#genreNames+1] = name end
+	table.sort(genreNames, NameLess)
+	for _, name in ipairs(genreNames) do
+		AddBucket("genre", name, genreSongs[name])
+	end
+
+	-- 3. Mix folders, alphabetical.
+	table.sort(folderNames, NameLess)
+	for _, name in ipairs(folderNames) do
+		AddBucket("folder", name, folderSongs[name])
 	end
 end
 
@@ -69,15 +152,21 @@ local function UpdateItemTargets(val)
 	end
 end
 
--- Load either a folder banner or a song banner onto an item's Banner sprite.
+-- Load either a bucket banner (mix folders only) or a song banner.
 local function UpdateItem(self, entry)
 	local banner = self:GetChild("Banner")
 	local name = self:GetChild("GroupName")
 	if type(entry) == "string" then
-		local path = SONGMAN:GetSongGroupBannerPath(entry)
-		if path == "" then banner:Load(nil) else banner:Load(path) end
+		local info = GroupInfo[entry]
+		if info and info.Kind == "folder" then
+			local path = SONGMAN:GetSongGroupBannerPath(info.Name)
+			if path == "" then banner:Load(nil) else banner:Load(path) end
+		else
+			-- Synthetic buckets are text-only for now.
+			banner:Load(nil)
+		end
 		banner:scaletoclipped(WheelItem.Width, WheelItem.Height)
-		name:settext(entry)
+		name:settext(info and info.Name or "")
 	elseif entry then
 		banner:LoadFromSongBanner(entry):scaletoclipped(WheelItem.Width, WheelItem.Height)
 		name:settext("")
