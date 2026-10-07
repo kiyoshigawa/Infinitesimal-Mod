@@ -133,18 +133,18 @@ local Confirmed = {}        -- PlayerNumber -> true once that side has confirmed
 local Transitioning = false -- one-shot guard for the gameplay transition
 
 -- ---------------------------------------------------------- session --------
--- Session state lives in GAMESTATE:Env() (same table as getenv/setenv): it survives
--- screen entries within a run and is fresh on each launch (event mode never hits the
--- GameState-resetting screens).  `BucketMemory` remembers the last song per bucket;
--- `View` remembers where the wheel was left so re-entry resumes there.
-local SESSION_KEY = "LuaWheelSession"
+-- Session state lives in a Lua global: it survives screen entries *and* title-menu
+-- visits within a run, and is fresh on each launch.  (GAMESTATE:Env() was tried
+-- first but the engine clears it when returning to the title.)  `BucketMemory`
+-- remembers the last song per bucket; `View` remembers where the wheel was left so
+-- re-entry resumes there.
 local SESSION_SCHEMA = 1
 
 local function Session()
-	local s = GAMESTATE:Env()[SESSION_KEY]
+	local s = LuaWheelSession
 	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
 		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 } }
-		GAMESTATE:Env()[SESSION_KEY] = s
+		LuaWheelSession = s
 	end
 	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
 	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
@@ -216,7 +216,17 @@ local function SetSelection(index)
 	local session = Session()
 	if type(entry) == "string" then
 		local songs = SongsByGroup[entry]
-		if songs and songs[1] then GAMESTATE:SetCurrentSong(songs[1]) end
+		if songs then
+			-- Preview the bucket's remembered song, else its first.
+			local preview = songs[1]
+			local remembered = session.BucketMemory[entry]
+			if remembered then
+				for _, s in ipairs(songs) do
+					if s:GetSongDir() == remembered then preview = s break end
+				end
+			end
+			if preview then GAMESTATE:SetCurrentSong(preview) end
+		end
 	elseif entry then
 		GAMESTATE:SetCurrentSong(entry)
 		-- Remember this song for the bucket we're in, so re-entering it resumes here.
