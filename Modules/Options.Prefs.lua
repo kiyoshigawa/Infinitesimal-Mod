@@ -113,7 +113,7 @@ return {
     SongProgress =
     {
         UserPref = true,
-        Default = false,
+        Default = true,
         Choices = { OptionNameString('Off'), OptionNameString('On') },
         Values = {false, true}
     },

@@ -25,7 +25,13 @@ end
 
 local IsReverse = GAMESTATE:GetPlayerState(pn):GetCurrentPlayerOptions():Reverse() > 0 and ShouldReverse
 local ScoreDisplay = LoadModule("Config.Load.lua")("ScoreDisplay", CheckIfUserOrMachineProfile(string.sub(pn, -1) - 1).."/OutFoxPrefs.ini")
-local SongProgress = LoadModule("Config.Load.lua")("SongProgress", CheckIfUserOrMachineProfile(string.sub(pn, -1) - 1).."/OutFoxPrefs.ini")
+-- Song Progress is on unless the profile explicitly turned it off, so profiles that
+-- have never touched the option (and brand new ones) get it with no setup.
+local ProfilePrefFile = CheckIfUserOrMachineProfile(string.sub(pn, -1) - 1).."/OutFoxPrefs.ini"
+local SongProgress = true
+if LoadModule("Config.Exists.lua")("SongProgress", ProfilePrefFile) then
+    SongProgress = LoadModule("Config.Load.lua")("SongProgress", ProfilePrefFile)
+end
 local ProLifebar = LoadModule("Config.Load.lua")("ProLifebar", CheckIfUserOrMachineProfile(string.sub(pn, -1) - 1).."/OutFoxPrefs.ini") and string.find(TimingMode, "Pump")
 local ProLifebarMax = 1
 local ProLifebarCrop = 1
