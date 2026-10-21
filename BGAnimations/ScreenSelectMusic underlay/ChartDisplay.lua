@@ -59,24 +59,35 @@ local function InputHandler(event)
     if pn == PLAYER_2 and not GAMESTATE:IsPlayerEnabled(PLAYER_2) then return end
 
     if SongIsChosen and PlayerCanMove[pn] then
-        -- Filter out everything but button presses
-        if event.type == "InputEventType_Repeat" or event.type == "InputEventType_Release" then return end
+        -- Repeats are allowed: holding left/right scrolls the chart list at the
+        -- engine's repeat cadence (the same one the music wheel uses).
+        if InputIntent.IsRelease(event) then return end
 
-        local button = event.button
-        if button == "Left" or button == "MenuLeft" or button == "DownLeft" then
+        local Intent = InputIntent.Intent
+        local intent = InputIntent.Horizontal(event.button)
+        -- A wall (no wrap) should complain once per press, not once per repeat.
+        local firstPress = InputIntent.IsFirstPress(event)
+
+        if intent == Intent.Left then
             if ChartIndex[pn] == 1 then
                 if CanWrap then
                     ChartIndex[pn] = #ChartArray
-                else return end
+                else
+                    if firstPress then MESSAGEMAN:Broadcast("MenuBoundaryDenied") end
+                    return
+                end
             else
                 ChartIndex[pn] = ChartIndex[pn] - 1
             end
             MESSAGEMAN:Broadcast("UpdateChartDisplay", { Player = pn })
-        elseif button == "Right" or button == "MenuRight" or button == "DownRight" then
+        elseif intent == Intent.Right then
             if ChartIndex[pn] == #ChartArray then
                 if CanWrap then
                     ChartIndex[pn] = 1
-                else return end
+                else
+                    if firstPress then MESSAGEMAN:Broadcast("MenuBoundaryDenied") end
+                    return
+                end
             else
                 ChartIndex[pn] = ChartIndex[pn] + 1
             end
@@ -379,6 +390,14 @@ t[#t+1] = Def.ActorFrame {
         IsAction=true,
         UpdateChartDisplayMessageCommand=function(self) self:play() end
     }
+}
+
+-- Wall feedback for a no-wrap chart list (WrapChartScroll off). The chart
+-- list owns the index, so this sound lives here rather than in the wheel.
+t[#t+1] = Def.Sound {
+    File=THEME:GetPathS("Common", "Cancel"),
+    IsAction=true,
+    MenuBoundaryDeniedMessageCommand=function(self) self:play() end
 }
 
 return t;

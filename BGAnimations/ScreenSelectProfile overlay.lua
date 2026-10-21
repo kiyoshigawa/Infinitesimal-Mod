@@ -263,10 +263,16 @@ local function InputHandler(event)
     if not pn then return end
 
     -- Don't want to move when releasing the button
-    if event.type == "InputEventType_Release" then return end
+    if InputIntent.IsRelease(event) then return end
 
-    local button = event.button
-    if button == "Start" or button == "Center" then
+    local Intent = InputIntent.Intent
+    local intent = InputIntent.Vertical(event.button)
+    -- One action per press for joining/locking/back; Prev/Next deliberately
+    -- keep repeating so a held direction scrolls the list.
+    local firstPress = InputIntent.IsFirstPress(event)
+
+    if intent == Intent.Select then
+        if not firstPress then return end
         if not GAMESTATE:IsHumanPlayer(pn) then
             -- First joiner picks up its saved profile; later joiners start on Guest.
             MESSAGEMAN:Broadcast("StartButton")
@@ -297,25 +303,26 @@ local function InputHandler(event)
             end
         end
 
-    elseif button == "Up" or button == "MenuUp" or button == "MenuLeft" or button == "DownLeft" then
+    elseif intent == Intent.Prev or intent == Intent.Next then
         if GAMESTATE:IsHumanPlayer(pn) then
             if Ready[pn] then
-                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
-            elseif SetProfileIndexLocal(pn, profileIndex[pn] - 1) then
-                MESSAGEMAN:Broadcast("DirectionButton")
+                if firstPress then
+                    MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
+                end
+            else
+                local delta = (intent == Intent.Prev) and -1 or 1
+                if SetProfileIndexLocal(pn, profileIndex[pn] + delta) then
+                    MESSAGEMAN:Broadcast("DirectionButton")
+                elseif firstPress then
+                    -- No wrap on this list: hitting an end just complains.
+                    MESSAGEMAN:Broadcast("MenuBoundaryDenied")
+                end
             end
         end
 
-    elseif button == "Down" or button == "MenuDown" or button == "MenuRight" or button == "DownRight" then
-        if GAMESTATE:IsHumanPlayer(pn) then
-            if Ready[pn] then
-                MESSAGEMAN:Broadcast("ProfileLockDenied", { Player = pn })
-            elseif SetProfileIndexLocal(pn, profileIndex[pn] + 1) then
-                MESSAGEMAN:Broadcast("DirectionButton")
-            end
-        end
-
-    elseif button == "Back" or button == "UpLeft" or button == "UpRight" then
+    elseif intent == Intent.Back then
+        -- One shot: holding back must not unlock a side and then cancel the screen.
+        if not firstPress then return end
         -- Back: unlock this side if it is locked. A joined side never drops back
         -- to the "press center to join" prompt (that resurrects the join graphic),
         -- so while the other side is engaged an unlocked press just gets the locked
@@ -443,6 +450,12 @@ local t = Def.ActorFrame {
             File=THEME:GetPathS("Common", "Cancel"),
             IsAction=true,
             ProfileLockDeniedMessageCommand=function(self) self:play() end
+        },
+
+        Def.Sound {
+            File=THEME:GetPathS("Common", "Cancel"),
+            IsAction=true,
+            MenuBoundaryDeniedMessageCommand=function(self) self:play() end
         }
     }
 }

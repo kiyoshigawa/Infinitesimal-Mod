@@ -139,17 +139,18 @@ local Transitioning = false -- one-shot guard for the gameplay transition
 -- first but the engine clears it when returning to the title.)  `BucketMemory`
 -- remembers the last song per bucket; `DiffMemory` holds the last started song's
 -- difficulty per side (keyed by profile identity, or by side for a guest); `View`
--- remembers where the wheel was left so re-entry resumes there.
-local SESSION_SCHEMA = 2
+-- remembers where the wheel was left, by identity (bucket kind/name + song dir,
+-- the same vocabulary ResumeState.ini uses) rather than by list index.
+local SESSION_SCHEMA = 3
 
 local function Session()
 	local s = LuaWheelSession
 	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
-		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, DiffMemory = {}, Seeded = false }
+		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Index = 1 }, DiffMemory = {}, Seeded = false }
 		LuaWheelSession = s
 	end
 	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
-	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
+	if type(s.View) ~= "table" then s.View = { Index = 1 } end
 	if type(s.DiffMemory) ~= "table" then s.DiffMemory = {} end
 	if s.Seeded == nil then s.Seeded = false end
 	return s
@@ -292,7 +293,7 @@ end
 local function SeedFromProfile(session)
 	session.BucketMemory = {}
 	session.DiffMemory = {}
-	session.View = { Bucket = nil, Index = 1 } -- default: folder level, first bucket
+	session.View = { Index = 1 } -- default: folder level, first bucket
 
 	local seedPn = SeedPlayer()
 	local seedRec
@@ -309,11 +310,15 @@ local function SeedFromProfile(session)
 
 	local bucket = BucketKey(seedRec.BucketKind, seedRec.BucketName)
 	local songs = SongsByGroup[bucket]
-	local idx = songs and IndexOfSongIn(songs, seedRec.SongDir) or nil
-	if idx then
-		session.View = { Bucket = bucket, Index = idx }
-	elseif songs and #songs > 0 then
-		session.View = { Bucket = bucket, Index = 1 }
+	if songs and #songs > 0 then
+		-- Same record shape the live wheel writes: identity, not an index, so a
+		-- cold load and a warm re-entry restore through one code path.
+		session.View = {
+			BucketKind = seedRec.BucketKind,
+			BucketName = seedRec.BucketName,
+			SongDir = seedRec.SongDir,
+			Index = IndexOfSongIn(songs, seedRec.SongDir),
+		}
 	end
 end
 
@@ -335,6 +340,40 @@ local function UpdateItemTargets(val)
 		while Targets[i] > #Entries do Targets[i] = Targets[i] - #Entries end
 		while Targets[i] < 1 do Targets[i] = Targets[i] + #Entries end
 	end
+end
+
+-- Index of a bucket key in GroupList (nil if that bucket no longer exists).
+local function IndexOfFolderKey(kind, name)
+	if type(kind) ~= "string" or type(name) ~= "string" then return nil end
+	local key = BucketKey(kind, name)
+	for i = 1, #GroupList do
+		if GroupList[i] == key then return i end
+	end
+	return nil
+end
+
+-- Restore the wheel position from a session View record. Position is stored by
+-- identity (bucket kind/name + song directory, the same vocabulary as
+-- ResumeState.ini), not by list index, so a rebuilt or drifted list cannot land
+-- on the wrong song. The stored Index is only a fallback for entries that are
+-- gone (song deleted, bucket renamed).
+local function ResolveView(view)
+	if type(view) ~= "table" then view = {} end
+	local bucket = nil
+	if type(view.BucketKind) == "string" and type(view.BucketName) == "string" then
+		bucket = BucketKey(view.BucketKind, view.BucketName)
+	end
+	if bucket and SongsByGroup[bucket] then
+		CurrentGroup = bucket
+		BuildSongEntries(bucket)
+		CurrentIndex = IndexOfSongDir(view.SongDir) or tonumber(view.Index) or 1
+	else
+		CurrentGroup = nil
+		BuildFolderEntries()
+		CurrentIndex = IndexOfFolderKey(view.FolderKind, view.FolderName)
+			or tonumber(view.Index) or 1
+	end
+	if CurrentIndex < 1 or CurrentIndex > #Entries then CurrentIndex = 1 end
 end
 
 -- Load either a bucket banner (mix folders only) or a song banner.
@@ -393,7 +432,18 @@ local function SetSelection(index)
 		-- Restore this side's previously chosen charts for this song, if any.
 		RequestChartRestore(entry)
 	end
-	session.View = { Bucket = CurrentGroup, Index = CurrentIndex }
+	local view = { Index = CurrentIndex }
+	if CurrentGroup then
+		local info = GroupInfo[CurrentGroup]
+		view.BucketKind = info and info.Kind
+		view.BucketName = info and info.Name
+		if entry and type(entry) ~= "string" then view.SongDir = entry:GetSongDir() end
+	elseif type(entry) == "string" then
+		local info = GroupInfo[entry]
+		view.FolderKind = info and info.Kind
+		view.FolderName = info and info.Name
+	end
+	session.View = view
 	MESSAGEMAN:Broadcast("CurrentSongChanged")
 end
 
@@ -521,19 +571,18 @@ local function InputHandler(event)
 	if pn == PLAYER_1 and not GAMESTATE:IsPlayerEnabled(PLAYER_1) then return end
 	if pn == PLAYER_2 and not GAMESTATE:IsPlayerEnabled(PLAYER_2) then return end
 
-	local back   = button == "Back" or button == "UpLeft" or button == "UpRight"
-	local left   = button == "Left" or button == "MenuLeft" or button == "DownLeft"
-	local right  = button == "Right" or button == "MenuRight" or button == "DownRight"
-	local select = button == "Start" or button == "MenuStart" or button == "Center"
+	local Intent     = InputIntent.Intent
+	local intent     = InputIntent.Horizontal(button)
+	local firstPress = InputIntent.IsFirstPress(event)
 
 	if SongIsChosen then
 		-- Difficulty is owned by ChartDisplay. Each joined player confirms their own
 		-- chart; gameplay starts once every joined player has confirmed. Cancel must
 		-- stay available even after a player has confirmed -- Basic mode locks the
 		-- confirmed side out via PlayerCanMove, which we deliberately do not do.
-		if event.type == "InputEventType_Repeat" then return end
-
-		if back or button == "MenuUp" or button == "MenuDown" then
+		if intent == Intent.Back then
+			-- One shot: holding back must not unlock and then cancel in one hold.
+			if not firstPress then return end
 			if Confirmed[pn] then
 				-- Unlock just this player and stay in difficulty select; a second
 				-- Back (now unlocked) leaves to the song list.
@@ -542,38 +591,46 @@ local function InputHandler(event)
 			else
 				CancelSong()
 			end
-		elseif select then
+		elseif intent == Intent.Forward then
+			-- One shot: holding it must not confirm and then start gameplay.
+			if not firstPress then return end
 			if not Confirmed[pn] then
 				Confirmed[pn] = true
 				MESSAGEMAN:Broadcast("StepsChosen", { Player = pn })
 			end
 			if AllJoinedConfirmed() then StartGameplay() end
-		elseif (left or right) and Confirmed[pn] then
+		elseif (intent == Intent.Left or intent == Intent.Right) and Confirmed[pn] then
 			-- Locked: the chart cannot change. Give audible feedback so the
-			-- silence is not mistaken for a broken control.
-			MESSAGEMAN:Broadcast("LockedDifficultyDenied")
+			-- silence is not mistaken for a broken control. Initial press only, so
+			-- a held direction cannot machine-gun the denial sound.
+			if firstPress then
+				MESSAGEMAN:Broadcast("LockedDifficultyDenied")
+			end
 		end
 		return
 	end
 
 	if CurrentGroup == nil then
 		-- folder level
-		if left then Move(-1)
-		elseif right then Move(1)
-		elseif select then
-			local entry = Entries[CurrentIndex]
-			if type(entry) == "string" then EnterGroup(entry) end
-		elseif back then
-			SCREENMAN:GetTopScreen():Cancel()
+		if intent == Intent.Left then Move(-1)
+		elseif intent == Intent.Right then Move(1)
+		elseif intent == Intent.Forward then
+			-- One shot: holding it must not open a bucket and then select a song.
+			if firstPress then
+				local entry = Entries[CurrentIndex]
+				if type(entry) == "string" then EnterGroup(entry) end
+			end
+		elseif intent == Intent.Back then
+			if firstPress then SCREENMAN:GetTopScreen():Cancel() end
 		end
 	else
 		-- song level
-		if left then Move(-1)
-		elseif right then Move(1)
-		elseif select then
-			MESSAGEMAN:Broadcast("MusicWheelStart")
-		elseif back then
-			LeaveGroup()
+		if intent == Intent.Left then Move(-1)
+		elseif intent == Intent.Right then Move(1)
+		elseif intent == Intent.Forward then
+			if firstPress then MESSAGEMAN:Broadcast("MusicWheelStart") end
+		elseif intent == Intent.Back then
+			if firstPress then LeaveGroup() end
 		end
 	end
 
@@ -581,24 +638,15 @@ local function InputHandler(event)
 end
 
 -- --------------------------------------------------------------- actor ------
--- Re-entering the screen (e.g. after finishing a song) should resume where we left
--- off.  Position lives in the GAMESTATE:Env() session table, so it survives screen
--- entries within a run and resets on the next launch.
+-- Re-entering the screen (e.g. after finishing a song, or after a mid-session join)
+-- should resume where we left off.  Position lives in the Lua session table (see
+-- Session()) as identities, not indices, and resets on the next launch.
 local session = Session()
 if not session.Seeded then
 	SeedFromProfile(session)
 	session.Seeded = true
 end
-local view = session.View
-if type(view.Bucket) == "string" and SongsByGroup[view.Bucket] then
-	CurrentGroup = view.Bucket
-	BuildSongEntries(CurrentGroup)
-else
-	CurrentGroup = nil
-	BuildFolderEntries()
-end
-CurrentIndex = tonumber(view.Index) or 1
-if CurrentIndex < 1 or CurrentIndex > #Entries then CurrentIndex = 1 end
+ResolveView(session.View)
 UpdateItemTargets(CurrentIndex)
 
 local t = Def.ActorFrame {

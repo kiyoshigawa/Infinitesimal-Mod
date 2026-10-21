@@ -18,14 +18,14 @@ end
 
 -- Theme-side join vocabulary. Engine button names and GAMESTATE calls live here
 -- so screens express intent ("this press means join"), not engine API. event.button
--- is the engine GameButton name, hence Center/Start (MenuStart is a menu-button
--- name and is never emitted here).
+-- is the engine GameButton name, so the pump vocabulary is owned by
+-- Scripts/01 InputIntent.lua and this file only decides what "join" means.
 JoinUtils = JoinUtils or {}
 
-local JOIN_BUTTONS = { Center = true, Start = true }
-
+-- Joining is a menu intent too: the pump button vocabulary lives in
+-- Scripts/01 InputIntent.lua. Only Center/Start join (Up/MenuUp do not).
 function JoinUtils.IsJoinButton(button)
-    return JOIN_BUTTONS[button] == true
+    return InputIntent.IsJoin(button)
 end
 
 -- Can this side join right now? Uses engine state (IsSideJoined), not theme state.
