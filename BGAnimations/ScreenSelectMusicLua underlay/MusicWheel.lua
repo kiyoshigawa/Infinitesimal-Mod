@@ -18,6 +18,15 @@ local WheelItem = { Width = 212, Height = 120 }
 local WheelSpacing = 250
 local WheelRotation = 0.1
 
+-- ChartPreview pref: when on, the preview audio also keeps the music clock alive
+-- after the audible sample ends, so the chart preview keeps scrolling. See the
+-- preview audio actor near the bottom of this file.
+local UseChartPreview = LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini")
+
+-- Music volume is global and other themes/screens fade it; capture the incoming
+-- level so the preview can mute and then put it back exactly as it was.
+local PreviewVolume = nil
+
 -- ---------------------------------------------------------------- data ------
 -- Top-level entries are "buckets", computed here from SONGMAN:
 --   * custom buckets  (registry below; e.g. All Songs)
@@ -675,10 +684,21 @@ local t = Def.ActorFrame {
 	end,
 
 	OnCommand=function(self)
+		-- Restore target for the preview mute. Prefer the user's music-volume pref; the
+		-- live volume is only a fallback because a previous screen may have faded it.
+		PreviewVolume = tonumber(PREFSMAN:GetPreference("SoundVolume")) or SOUND:GetVolume() or 1
 		SCREENMAN:GetTopScreen():AddInputCallback(InputHandler)
 		self:easeoutexpo(1):y(SCREEN_HEIGHT / 2 - 150)
 		-- Defer the first selection until the screen/chrome are fully built.
 		self:sleep(0.1):queuecommand("InitialSelection")
+	end,
+
+	-- The preview part loops (when ChartPreview is on) so the music clock keeps
+	-- running silently after the audible window. Stop it and restore the volume on
+	-- the way out, otherwise the loop would follow us to the next screen.
+	OffCommand=function(self)
+		SOUND:StopMusic()
+		SOUND:Volume(PreviewVolume or 1)
 	end,
 
 	InitialSelectionCommand=function(self)
@@ -719,9 +739,28 @@ local t = Def.ActorFrame {
 
 		PlayMusicCommand=function(self)
 			local Song = GAMESTATE:GetCurrentSong()
-			if Song then
+			if not Song then return end
+
+			if not UseChartPreview then
+				-- Unchanged behaviour when the chart preview is off: one audible sample.
 				SOUND:PlayMusicPart(Song:GetMusicPath(), Song:GetSampleStart(), Song:GetSampleLength(), 0, 1, false, false, false, Song:GetTimingData())
+				return
 			end
+
+			-- The note field gets its position from the music clock, so stopping the audio
+			-- freezes the preview. Instead play the whole file from the sample start,
+			-- looped, and fade the music out when the audible preview window ends: the
+			-- clock keeps running (silently) and the arrows keep scrolling.
+			local SampleLength = Song:GetSampleLength()
+			local MuteAfter = (SampleLength and SampleLength > 0) and SampleLength or 12
+
+			SOUND:Volume(PreviewVolume or 1)
+			SOUND:PlayMusicPart(Song:GetMusicPath(), Song:GetSampleStart(), -1, 0, 1, true, false, false, Song:GetTimingData())
+			self:stoptweening():sleep(MuteAfter):queuecommand("MutePreview")
+		end,
+
+		MutePreviewCommand=function(self)
+			SOUND:Volume(0, 0.5)
 		end
 	},
 

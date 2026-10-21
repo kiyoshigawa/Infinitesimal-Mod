@@ -214,6 +214,21 @@ local t = Def.ActorFrame {
 
             -- Set the selected charts and broadcast a new message to avoid possible
             -- race conditions trying to obtain the currently selected chart.
+            -- When the StepsType changes, the engine switches that side's style, which
+            -- leaves any chart-preview note field with the wrong column count; drawing
+            -- it in that state aborts (ReceptorArrowRow::DrawPrimitives out_of_range).
+            -- Warn listeners first so the preview can hide before the switch.
+            for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+                if GAMESTATE:IsPlayerEnabled(pn) then
+                    local NewSteps = ChartArray[ChartIndex[pn]]
+                    local CurSteps = GAMESTATE:GetCurrentSteps(pn)
+                    if CurSteps and NewSteps
+                        and CurSteps:GetStepsType() ~= NewSteps:GetStepsType() then
+                        MESSAGEMAN:Broadcast("PreviewStepsTypeChanging", { Player = pn })
+                    end
+                end
+            end
+
             if GAMESTATE:IsPlayerEnabled(PLAYER_1) then
                 GAMESTATE:SetCurrentSteps(PLAYER_1, ChartArray[ChartIndex[PLAYER_1]])
                 if ChartIndex[PLAYER_1] ~= PrevChartIndex[PLAYER_1] then

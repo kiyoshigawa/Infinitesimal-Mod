@@ -8,6 +8,11 @@
 
 local t = LoadActor(THEME:GetPathB("ScreenSelectMusic", "underlay"))
 
+-- The chrome above clears InfinitesimalPreviewScreen (the stock select screen shares
+-- it and must not mount the chart preview). Re-set it after that load so the preview
+-- mounts on this screen only.
+InfinitesimalPreviewScreen = true
+
 t[#t+1] = LoadActor("MusicWheel") .. { Name = "MusicWheel" }
 
 return t

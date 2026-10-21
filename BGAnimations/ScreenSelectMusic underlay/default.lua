@@ -1,5 +1,10 @@
 setenv("IsBasicMode", false)
 
+-- Screen marker for shared chrome: this underlay is used by the stock select screen
+-- as well as the theme-owned Lua screen, so it clears the chart-preview flag here.
+-- ScreenSelectMusicLua underlay/default.lua sets it back on after loading this tree.
+InfinitesimalPreviewScreen = false
+
 local t = Def.ActorFrame {
     OnCommand=function(self)
         -- Always change sort back to groups, since Basic mode can leave it stuck in Preferred.

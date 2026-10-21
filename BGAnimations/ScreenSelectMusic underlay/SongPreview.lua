@@ -2,7 +2,6 @@ local FrameW = 640
 local FrameH = 360
 
 local PreviewDelay = THEME:GetMetric("ScreenSelectMusic", "SampleMusicDelay")
-local DisplayNotefield = false
 
 -- Video/background display
 local t = Def.ActorFrame {
@@ -122,25 +121,95 @@ local t = Def.ActorFrame {
     }
 }
 
--- Chart preview WIP, use at your own risk!
+-- Chart preview (difficulty stage).
+-- Only the theme-owned select screen (ScreenSelectMusicLua) mounts it: the stock
+-- ScreenSelectMusic shares this underlay, so the screen marker InfinitesimalPreviewScreen
+-- is set by the underlays and read here at run time (never at load time, which would
+-- depend on file load order). The pref gates the whole block.
 if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
-    t[#t+1] = Def.ActorFrame {
-        InitCommand=function(self)
-            self:y(0):zoom(0.75)
-        end,
-        OnCommand=function(self)
-            if GAMESTATE:GetCurrentSong() then
-                self:AddChildFromPath(THEME:GetPathB("", "NotefieldPreview"))
+    -- What the live preview was last built for: the song directory, each joined
+    -- side's chart key and each side's preferred noteskin (a noteskin change has to
+    -- rebuild the field). Any difference means rebuild.
+    local function ChartSignature()
+        local Song = GAMESTATE:GetCurrentSong()
+        if not Song then return "" end
+        local sig = Song:GetSongDir()
+        for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+            if GAMESTATE:IsPlayerEnabled(pn) then
+                local Steps = GAMESTATE:GetCurrentSteps(pn)
+                local pnNoteField = PlayerNumber:Reverse()[pn]
+                local skin = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions("ModsLevel_Preferred"):NoteSkin()
+                sig = sig .. "|" .. (Steps and Steps:GetChartKey() or "-") .. "@" .. tostring(skin)
             end
+        end
+        return sig
+    end
+
+    local Enabled = false      -- this screen owns a preview; set in OnCommand
+    local Shown = false        -- difficulty stage is open
+    local BuiltSignature = nil -- signature the live field was last built for
+
+    t[#t+1] = Def.ActorFrame {
+        Name = "ChartPreview",
+
+        InitCommand=function(self)
+            self:y(0):zoom(0.75):visible(false)
         end,
-        --[[
-        Def.Quad {
-            InitCommand=function(self)
-                self:zoomto(854, 480):diffuse(Color.Black):diffusealpha(0.5):visible(false)
-            end,
-            SongChosenMessageCommand=function(self) self:visible(true) end,
-            SongUnchosenMessageCommand=function(self) self:visible(false) end,
-        } ]]
+
+        SongChosenMessageCommand=function(self)
+            if not Enabled then return end
+            Shown = true
+            -- Force a build on the next poll; the reveal happens after it, so no
+            -- empty frame is shown. Never build from inside a handler.
+            BuiltSignature = nil
+        end,
+        SongUnchosenMessageCommand=function(self)
+            Shown = false
+            self:visible(false)
+        end,
+
+        -- ChartDisplay is about to change this side's StepsType, which switches the
+        -- engine style. The live field still has the old column count and drawing it
+        -- then aborts, so hide now (hiding does not touch message subscriptions) and
+        -- let the poll rebuild and reveal it.
+        PreviewStepsTypeChangingMessageCommand=function(self)
+            self:visible(false)
+            -- Force the poll to rebuild and reveal, even if the signature happens to
+            -- match (the field must be re-made for the new column count).
+            BuiltSignature = nil
+        end,
+
+        -- Mount the preview shell here, while the screen's own commands still run:
+        -- actors added after a screen is running get InitCommand but never OnCommand
+        -- in this engine build, so the shell must exist up front and do its work on
+        -- explicit commands.
+        OnCommand=function(self)
+            Enabled = (InfinitesimalPreviewScreen == true)
+            if not Enabled then return end
+            self:AddChildFromPath(THEME:GetPathB("", "NotefieldPreview"))
+            self:sleep(0.05):queuecommand("PollPreview")
+        end,
+
+        PollPreviewCommand=function(self)
+            -- Builds happen here, outside any message broadcast: mutating actors in a
+            -- handler changes MessageManager's subscriber list mid-broadcast and
+            -- segfaults the engine.
+            if Shown then
+                local preview = self:GetChild("PreviewNotefield")
+                if preview then
+                    local sig = ChartSignature()
+                    if sig ~= BuiltSignature then
+                        preview:playcommand("BuildChart")
+                        -- Recorded after the build: if a side has no steps yet the
+                        -- signature differs again next tick, so it self-heals instead
+                        -- of being marked done.
+                        BuiltSignature = sig
+                        self:visible(true)
+                    end
+                end
+            end
+            self:sleep(0.05):queuecommand("PollPreview")
+        end,
     }
 end
 

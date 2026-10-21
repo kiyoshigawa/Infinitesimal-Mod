@@ -1,129 +1,89 @@
--- Majority of code borrowed from Mr. ThatKid and Sudospective
-
-local NotefieldRenderBefore = THEME:GetMetric("Player","DrawDistanceBeforeTargetsPixels") -- 300
-local NotefieldRenderAfter = THEME:GetMetric("Player","DrawDistanceAfterTargetsPixels") -- 0
-local ReceptorPosNormal = THEME:GetMetric("Player","ReceptorArrowsYStandard")
-local ReceptorPosReverse = THEME:GetMetric("Player","ReceptorArrowsYReverse")
-local ReceptorOffset = ReceptorPosReverse - ReceptorPosNormal
-local NotefieldY = (ReceptorPosNormal + ReceptorPosReverse) / 2
+-- Chart preview shell: one persistent ActorFrameTexture per enabled player, and one
+-- NoteField per player that is reused across chart changes.
+--
+-- The AFT (and the Sprite that shows it) are created once when the screen loads and
+-- are never destroyed, so the texture is never re-registered and a stale texture
+-- cannot be displayed.
+--
+-- The chart itself lives in a separate NoteField actor (BGAnimations/PreviewField.lua).
+-- A chart change reloads the existing field, which costs a few tens of milliseconds;
+-- the field is only recreated when the StepsType or the preferred noteskin changes,
+-- because the column count and the noteskin textures have to change with them, and
+-- drawing a field whose columns no longer match the engine style aborts in
+-- ReceptorArrowRow::DrawPrimitives.
+--
+-- BuildChart is invoked from SongPreview's poll (a tween), never from a message
+-- handler: mutating actors inside a broadcast segfaults the engine.
+--
+-- Note field layout borrowed from Mr. ThatKid and Sudospective
 
 local PlayerPos = GAMESTATE:GetNumPlayersEnabled() == 1 and "OnePlayerTwoSides" or "TwoPlayersTwoSides"
-local PreviewDelay = THEME:GetMetric("ScreenSelectMusic", "SampleMusicDelay")
 local AFTWidth = GAMESTATE:GetNumPlayersEnabled() == 1 and 640 or 320
 
-local STCache = {}
+local AFTs = {}
+local Fields = {}
+local FieldType = {}
+local FieldSkin = {}
 
-local function GetCurrentChartIndex(pn, ChartArray)
-    local PlayerSteps = GAMESTATE:GetCurrentSteps(pn)
-    -- Not sure how the previous checks fails at times, so here it is once again
-    if ChartArray then
-        for i=1,#ChartArray do
-            if PlayerSteps == ChartArray[i] then
-                return i
-            end
-        end
-    end
-    -- If it reaches this point, the selected steps doesn't equal anything
-    return nil
+local function CreateField(pn, AFT)
+	AFT:RemoveChild("PreviewField")
+	-- PreviewField.lua reads its player from this global at chunk load.
+	InfinitesimalPreviewFieldPN = pn
+	AFT:AddChildFromPath(THEME:GetPathB("", "PreviewField"))
+	local field = AFT:GetChild("PreviewField")
+	Fields[pn] = field
+	if field then field:playcommand("Build") end
+	return field
 end
 
-local t = Def.ActorFrame {}
+local t = Def.ActorFrame {
+	Name = "PreviewNotefield",
+
+	BuildChartCommand=function(self)
+		for _, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
+			local AFT = AFTs[pn]
+			local Steps = GAMESTATE:GetCurrentSteps(pn)
+			if AFT and Steps then
+				local pnNoteField = PlayerNumber:Reverse()[pn]
+				local stype = ToEnumShortString(Steps:GetStepsType())
+				local skin = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions("ModsLevel_Preferred"):NoteSkin()
+
+				if not Fields[pn] or FieldType[pn] ~= stype or FieldSkin[pn] ~= skin then
+					CreateField(pn, AFT)
+					FieldType[pn] = stype
+					FieldSkin[pn] = skin
+				else
+					Fields[pn]:playcommand("Build")
+				end
+			end
+		end
+	end,
+}
 
 for i, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
-    -- To avoid crashes with player 2
-    local pnNoteField = PlayerNumber:Reverse()[pn]
-    STCache[pn] = nil
+	t[#t+1] = Def.ActorFrame {
+		Name="Player" .. ToEnumShortString(pn),
+		FOV=45,
+		InitCommand=function(self)
+			self:x((THEME:GetMetric('ScreenGameplay', 'Player' .. ToEnumShortString(pn) .. PlayerPos .. 'X') - SCREEN_CENTER_X) / 1.5)
+		end,
 
-    t[#t+1] = Def.ActorFrame {
-        Name="Player" .. ToEnumShortString(pn),
-        FOV=45,
-        InitCommand=function(self)
-            self:x((THEME:GetMetric('ScreenGameplay', 'Player' .. ToEnumShortString(pn) .. PlayerPos .. 'X') - SCREEN_CENTER_X) / 1.5):visible(false)
-        end,
+		Def.ActorFrameTexture {
+			InitCommand=function(self)
+				AFTs[pn] = self
+				self:SetTextureName("AFT" .. ToEnumShortString(pn))
+				self:SetWidth(AFTWidth):SetHeight(480)
+				self:EnableAlphaBuffer(true):Create()
+			end,
+		},
 
-        SongChosenMessageCommand=function(self) self:visible(true) end,
-        SongUnchosenMessageCommand=function(self) self:visible(false) end,
-        
-        Def.ActorFrameTexture {
-            InitCommand=function(self)
-                self:SetTextureName("AFT" .. ToEnumShortString(pn))
-                self:SetWidth(AFTWidth):SetHeight(480)
-                self:EnableAlphaBuffer(true)
-                self:Create()
-            end,
-            
-            --[[ Debug
-            Def.Quad {
-                InitCommand=function(self)
-                    self:FullScreen():diffuse(Color.Blue):diffusealpha(0.9)
-                end,
-            }, ]]
-
-            Def.NoteField {
-                Name = "NotefieldPreview",
-                Player = pnNoteField,
-                NoteSkin = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions('ModsLevel_Preferred'):NoteSkin(),
-                DrawDistanceAfterTargetsPixels = NotefieldRenderAfter,
-                DrawDistanceBeforeTargetsPixels = NotefieldRenderBefore,
-                YReverseOffsetPixels = ReceptorOffset,
-                FieldID=1,
-                OnCommand=function(self)
-                    self:xy(AFTWidth / 2, 240):addy(NotefieldY)
-                    :GetPlayerOptions("ModsLevel_Current")
-                    :StealthPastReceptors(true, true)
-                    
-                    self:AutoPlay(true)
-
-                    LoadModule("Player.SetSpeed.lua")(pn)
-                    local PlayerModsArray = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptionsString("ModsLevel_Preferred")
-                    self:GetPlayerOptions("ModsLevel_Current"):FromString(PlayerModsArray)
-                end,
-
-                CurrentStepsP1ChangedMessageCommand=function(self) self:queuecommand("Refresh") end,
-                CurrentStepsP2ChangedMessageCommand=function(self) self:queuecommand("Refresh") end,
-                OptionsListStartMessageCommand=function(self) self:playcommand("Refresh") end,
-
-                RefreshCommand=function(self)
-                    self:AutoPlay(false)
-                    local ChartArray = nil
-
-                    local Song = GAMESTATE:GetCurrentSong()
-                    if Song then ChartArray = Song:GetAllSteps() else return end
-
-                    local Steps = GAMESTATE:GetCurrentSteps(pn)
-                    local StepsType = Steps:GetStepsType()
-                    --SCREENMAN:SystemMessage(StepsType)
-
-                    LoadModule("Player.SetSpeed.lua")(pn)
-                    local PlayerModsArray = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptionsString("ModsLevel_Preferred")
-                    self:GetPlayerOptions("ModsLevel_Current"):FromString(PlayerModsArray)
-
-                    if not STCache[pn] or STCache[pn] ~= StepsType then
-                        self:ChangeReload(Steps)
-                        STCache[pn] = StepsType
-                    end
-
-                    local ChartIndex = GetCurrentChartIndex(pnNoteField, ChartArray)
-                    if not ChartIndex then return end
-
-                    local NoteData = Song:GetNoteData(ChartIndex)
-                    if not NoteData then return end
-
-                    self:SetNoteDataFromLua({})
-                    --SCREENMAN:SystemMessage("Loading ChartIndex!")
-                    self:SetNoteDataFromLua(NoteData)
-                    self:AutoPlay(true)
-                end
-            }
-        },
-        
-        Def.Sprite {
-            Texture="AFT" .. ToEnumShortString(pn),
-            InitCommand=function(self)
-                self:zoomto(AFTWidth, 480)
-            end
-        }
-    }
+		Def.Sprite {
+			Texture="AFT" .. ToEnumShortString(pn),
+			InitCommand=function(self)
+				self:zoomto(AFTWidth, 480)
+			end
+		}
+	}
 end
 
 return t
