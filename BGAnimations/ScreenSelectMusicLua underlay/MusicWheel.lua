@@ -137,19 +137,20 @@ local Transitioning = false -- one-shot guard for the gameplay transition
 -- Session state lives in a Lua global: it survives screen entries *and* title-menu
 -- visits within a run, and is fresh on each launch.  (GAMESTATE:Env() was tried
 -- first but the engine clears it when returning to the title.)  `BucketMemory`
--- remembers the last song per bucket; `View` remembers where the wheel was left so
--- re-entry resumes there.
-local SESSION_SCHEMA = 1
+-- remembers the last song per bucket; `DiffMemory` holds the last started song's
+-- difficulty per side (keyed by profile identity, or by side for a guest); `View`
+-- remembers where the wheel was left so re-entry resumes there.
+local SESSION_SCHEMA = 2
 
 local function Session()
 	local s = LuaWheelSession
 	if type(s) ~= "table" or s.Schema ~= SESSION_SCHEMA then
-		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, ChartBySong = {}, Seeded = false }
+		s = { Schema = SESSION_SCHEMA, BucketMemory = {}, View = { Bucket = nil, Index = 1 }, DiffMemory = {}, Seeded = false }
 		LuaWheelSession = s
 	end
 	if type(s.BucketMemory) ~= "table" then s.BucketMemory = {} end
 	if type(s.View) ~= "table" then s.View = { Bucket = nil, Index = 1 } end
-	if type(s.ChartBySong) ~= "table" then s.ChartBySong = {} end
+	if type(s.DiffMemory) ~= "table" then s.DiffMemory = {} end
 	if s.Seeded == nil then s.Seeded = false end
 	return s
 end
@@ -180,41 +181,68 @@ local function SideKey(pn)
 	return "guest:" .. tostring(pn)
 end
 
--- Remember each joined side's chart for a song (keyed by profile), for restore later.
+-- Lock in each joined side's difficulty memory when a song starts. Memory is keyed
+-- by profile identity (SideKey), so a profile keeps its value on either side; guests
+-- stay per-side. The record also names the chart, so re-opening the same song
+-- restores exactly that chart.
 local function CaptureCharts(song)
 	if not song then return end
-	local refs = {}
+	local memory = Session().DiffMemory
+	local songDir = song:GetSongDir()
 	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
 		if GAMESTATE:IsPlayerEnabled(pn) then
 			local steps = GAMESTATE:GetCurrentSteps(pn)
 			if steps then
-				refs[SideKey(pn)] = { Key = steps:GetChartKey(), Difficulty = ToEnumShortString(steps:GetDifficulty()) }
+				memory[SideKey(pn)] = {
+					StepsType = steps:GetStepsType(),
+					Meter = steps:GetMeter(),
+					SongDir = songDir,
+					ChartKey = steps:GetChartKey(),
+				}
 			end
 		end
 	end
-	if next(refs) then
-		Session().ChartBySong[song:GetSongDir()] = refs
-	end
 end
 
--- Ask ChartDisplay to restore saved charts for `song` (one-shot handoff), matching
--- each current side to its own profile's saved choice.
+-- The difficulty memory to snap to for a side. A guest has no persistent record of
+-- its own, so until it starts a song it mirrors a profiled side's live record; with
+-- no profile in play it has none, and the wheel starts at the first chart.
+local function DifficultyRecordFor(pn)
+	local memory = Session().DiffMemory
+	local rec = memory[SideKey(pn)]
+	if rec then return rec end
+	if ProfileDirFor(pn) then return nil end
+	for _, other in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if other ~= pn and GAMESTATE:IsPlayerEnabled(other)
+			and PROFILEMAN:IsPersistentProfile(other) then
+			local otherRec = memory[SideKey(other)]
+			if otherRec then return otherRec end
+		end
+	end
+	return nil
+end
+
+-- Ask ChartDisplay to snap to each side's remembered difficulty for `song`
+-- (one-shot handoff). A side with no memory yet gets { Default = true }, meaning
+-- "start at the first chart".
 local function RequestChartRestore(song)
 	if not song then return end
-	local refs = Session().ChartBySong[song:GetSongDir()]
-	if refs then
-		local pending = { SongDir = song:GetSongDir() }
-		for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do pending[pn] = refs[SideKey(pn)] end
-		GAMESTATE:Env()["LuaWheelChartRestore"] = pending
-	else
-		GAMESTATE:Env()["LuaWheelChartRestore"] = nil
+	local pending = { SongDir = song:GetSongDir() }
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		local rec = DifficultyRecordFor(pn)
+		if rec and tonumber(rec.Meter) then
+			pending[pn] = { StepsType = rec.StepsType, Meter = rec.Meter, ChartKey = rec.ChartKey }
+		else
+			pending[pn] = { Default = true }
+		end
 	end
+	GAMESTATE:Env()["LuaWheelChartRestore"] = pending
 end
 
 -- ------------------------------------------------- durable resume state -----
--- Per-profile resume record in Save/LocalProfiles/<id>/ResumeState.ini (dedicated
--- file, written via Config.Save so it never rewrites prefs the engine owns).
-local RESUME_SCHEMA = 1
+-- Per-profile record in Save/LocalProfiles/<id>/ResumeState.ini. The file format,
+-- the schema migrations and the write path live in WheelResume
+-- (Scripts/01 WheelResume.lua); this file only decides what goes into a record.
 
 local function IndexOfSongIn(list, dir)
 	for i = 1, #list do
@@ -234,86 +262,59 @@ local function SeedPlayer()
 	return nil
 end
 
-local function LoadResume(dir)
-	if not dir then return nil end
-	local path = dir .. "/ResumeState.ini"
-	local function get(k) return LoadModule("Config.Load.lua")(k, path) end
-	if tonumber(get("WheelSchema") or 0) ~= RESUME_SCHEMA then return nil end
-	local kind, name = get("WheelBucketKind"), get("WheelBucketName")
-	local song = get("WheelSongDir")
-	if type(kind) ~= "string" or type(name) ~= "string" then return nil end
-	if type(song) ~= "string" or song == "" then return nil end
-	local key, diff = get("WheelChartKey"), get("WheelDifficulty")
-	return {
-		Bucket = BucketKey(kind, name),
-		SongDir = song,
-		ChartKey = type(key) == "string" and key or nil,
-		Difficulty = type(diff) == "string" and diff or nil,
-	}
-end
-
-local function SaveResume(dir, bucketKey, songDir, chartRef)
-	if not dir then return end
-	local path = dir .. "/ResumeState.ini"
-	local info = GroupInfo[bucketKey]
-	local save = LoadModule("Config.Save.lua")
-	save("WheelSchema", tostring(RESUME_SCHEMA), path)
-	save("WheelBucketKind", info and info.Kind or "", path)
-	save("WheelBucketName", info and info.Name or "", path)
-	save("WheelSongDir", songDir or "", path)
-	save("WheelChartKey", (chartRef and chartRef.Key) or "", path)
-	save("WheelDifficulty", (chartRef and chartRef.Difficulty) or "", path)
-end
-
 local function SaveResumeForProfiles()
 	local song = GAMESTATE:GetCurrentSong()
 	if not song or not CurrentGroup or not GroupInfo[CurrentGroup] then return end
-	local songDir = song:GetSongDir()
-	local refs = Session().ChartBySong[songDir] or {}
+	local info = GroupInfo[CurrentGroup]
+	local memory = Session().DiffMemory
 	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
 		if GAMESTATE:IsPlayerEnabled(pn) then
 			local dir = ProfileDirFor(pn)
-			if dir then SaveResume(dir, CurrentGroup, songDir, refs[SideKey(pn)]) end
+			local rec = dir and memory[SideKey(pn)]
+			if rec then
+				WheelResume.Save(dir, {
+					Schema = WheelResume.CurrentSchema,
+					BucketKind = info.Kind,
+					BucketName = info.Name,
+					SongDir = song:GetSongDir(),
+					StepsType = rec.StepsType,
+					Meter = rec.Meter,
+					ChartKey = rec.ChartKey,
+				})
+			end
 		end
 	end
 end
 
--- On the first entry of a run, restore the seed profile's last bucket/song/chart.
+-- On the first entry of a run, load every profiled side's difficulty memory and
+-- restore the seed profile's last bucket/song. Guests stay unset here; they mirror a
+-- profiled side's live record until they start a song (see DifficultyRecordFor).
 local function SeedFromProfile(session)
 	session.BucketMemory = {}
-	session.ChartBySong = {}
+	session.DiffMemory = {}
 	session.View = { Bucket = nil, Index = 1 } -- default: folder level, first bucket
 
 	local seedPn = SeedPlayer()
-	local rec = LoadResume(ProfileDirFor(seedPn))
-	if not rec then return end
-
-	local songs = SongsByGroup[rec.Bucket]
-	local idx = songs and IndexOfSongIn(songs, rec.SongDir) or nil
-	if idx then
-		session.View = { Bucket = rec.Bucket, Index = idx }
-	elseif songs and #songs > 0 then
-		session.View = { Bucket = rec.Bucket, Index = 1 }
-	else
-		return -- bucket gone/empty: stay at the default folder position
-	end
-
-	-- Chart refs for the seeded song: seed side from its record; the other side from
-	-- its own record if it names the same song, else its difficulty enum only.
-	local refs = {}
-	refs[SideKey(seedPn)] = { Key = rec.ChartKey, Difficulty = rec.Difficulty }
-	local otherPn = (seedPn == PLAYER_1) and PLAYER_2 or PLAYER_1
-	if GAMESTATE:IsPlayerEnabled(otherPn) then
-		local otherRec = LoadResume(ProfileDirFor(otherPn))
-		if otherRec then
-			if otherRec.SongDir == rec.SongDir then
-				refs[SideKey(otherPn)] = { Key = otherRec.ChartKey, Difficulty = otherRec.Difficulty }
-			else
-				refs[SideKey(otherPn)] = { Difficulty = otherRec.Difficulty }
+	local seedRec
+	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+		if GAMESTATE:IsPlayerEnabled(pn) then
+			local rec = WheelResume.Load(ProfileDirFor(pn))
+			if rec then
+				session.DiffMemory[SideKey(pn)] = rec
+				if pn == seedPn then seedRec = rec end
 			end
 		end
 	end
-	session.ChartBySong[rec.SongDir] = refs
+	if not seedRec then return end
+
+	local bucket = BucketKey(seedRec.BucketKind, seedRec.BucketName)
+	local songs = SongsByGroup[bucket]
+	local idx = songs and IndexOfSongIn(songs, seedRec.SongDir) or nil
+	if idx then
+		session.View = { Bucket = bucket, Index = idx }
+	elseif songs and #songs > 0 then
+		session.View = { Bucket = bucket, Index = 1 }
+	end
 end
 
 local function BuildFolderEntries()
@@ -620,7 +621,12 @@ local t = Def.ActorFrame {
 
 	-- Race condition workaround (matches Basic wheel)
 	MusicWheelStartMessageCommand=function(self) self:sleep(0.01):queuecommand("Confirm") end,
-	ConfirmCommand=function(self) MESSAGEMAN:Broadcast("SongChosen") end,
+	ConfirmCommand=function(self)
+		-- Re-arm the snap as the difficulty stage opens: a side that joined since this
+		-- song was highlighted (a mid-session guest) then still gets its memory honoured.
+		RequestChartRestore(GAMESTATE:GetCurrentSong())
+		MESSAGEMAN:Broadcast("SongChosen")
+	end,
 
 	SongChosenMessageCommand=function(self)
 		SongIsChosen = true

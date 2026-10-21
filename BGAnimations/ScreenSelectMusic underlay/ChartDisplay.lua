@@ -38,27 +38,6 @@ function SortCharts(a, b)
     end
 end
 
--- Resolve a saved chart reference ({Key, Difficulty, Index}, from the theme wheel)
--- to an index in ChartArray. Ladder: exact chart key -> saved index (same difficulty)
--- -> first chart of that difficulty -> no match (nil, caller keeps current index).
-local function ResolveChartIndex(Array, ref)
-    if ref.Key and ref.Key ~= "" then
-        for i = 1, #Array do
-            if Array[i]:GetChartKey() == ref.Key then return i end
-        end
-    end
-    if ref.Difficulty then
-        if ref.Index and Array[ref.Index]
-            and ToEnumShortString(Array[ref.Index]:GetDifficulty()) == ref.Difficulty then
-            return ref.Index
-        end
-        for i = 1, #Array do
-            if ToEnumShortString(Array[i]:GetDifficulty()) == ref.Difficulty then return i end
-        end
-    end
-    return nil
-end
-
 local ChartLabels = {
     "NEW",
     "ANOTHER",
@@ -201,15 +180,22 @@ local t = Def.ActorFrame {
             if ChartIndex[PLAYER_2] < 1 then ChartIndex[PLAYER_2] = 1
             elseif ChartIndex[PLAYER_2] > #ChartArray then ChartIndex[PLAYER_2] = #ChartArray end
 
-            -- Apply a pending per-side chart restore from the theme wheel (one-shot),
-            -- only for the song it was requested for. Absent for stock ScreenSelectMusic.
+            -- Apply a pending per-side difficulty snap from the theme wheel (one-shot),
+            -- only for the song it was requested for. Absent for stock ScreenSelectMusic,
+            -- which therefore keeps its own index memory. The wheel hands over the side's
+            -- remembered {StepsType, Meter, ChartKey}; {Default = true} means "no memory
+            -- yet: start at the first chart".
             local pending = GAMESTATE:Env()["LuaWheelChartRestore"]
             if pending and CurrentSong and pending.SongDir == CurrentSong:GetSongDir() then
                 for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
                     local ref = pending[pn]
-                    if ref and GAMESTATE:IsPlayerEnabled(pn) then
-                        local idx = ResolveChartIndex(ChartArray, ref)
-                        if idx then ChartIndex[pn] = idx end
+                    if GAMESTATE:IsPlayerEnabled(pn) and type(ref) == "table" then
+                        if ref.Default then
+                            ChartIndex[pn] = 1
+                        else
+                            local idx = WheelResume.NearestIndex(ChartArray, ref)
+                            if idx then ChartIndex[pn] = idx end
+                        end
                     end
                 end
                 GAMESTATE:Env()["LuaWheelChartRestore"] = nil
