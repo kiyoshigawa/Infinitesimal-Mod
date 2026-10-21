@@ -73,6 +73,13 @@ local JOIN = {
     Start  = true,
 }
 
+-- The Select button opens the command window at folder/song level. Pump has no
+-- MenuSelect; Select is what the keymap binds (this machine: P1 "/", P2 KP 0)
+-- and the engine emits it as the game button "Select".
+local OPEN_OPTIONS = {
+    Select = true,
+}
+
 function InputIntent.Horizontal(button)
     if not button then return nil end
     return HORIZONTAL[button]
@@ -85,6 +92,10 @@ end
 
 function InputIntent.IsJoin(button)
     return button ~= nil and JOIN[button] == true
+end
+
+function InputIntent.IsOpenOptions(button)
+    return button ~= nil and OPEN_OPTIONS[button] == true
 end
 
 -- Engine input event types (Docs/Luadoc/Lua.xml, Enum InputEventType).

@@ -5,4 +5,7 @@ local t = LoadActor(THEME:GetPathB("ScreenSelectMusic", "overlay"))
 
 t[#t+1] = LoadActor("LockIndicator")
 
+-- Engine command windows (one per joined player).
+t[#t+1] = LoadActor("EngineOptionsList")
+
 return t

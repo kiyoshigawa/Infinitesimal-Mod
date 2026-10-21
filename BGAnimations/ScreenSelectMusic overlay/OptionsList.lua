@@ -1,9 +1,34 @@
+-- Actor for a player's OptionsList. On the stock screen the engine adds it as a
+-- direct child of the screen; the theme-owned wheel registers its own actors in
+-- WheelOptions. Resolved lazily, because this overlay can be built before the
+-- window actors exist.
+local function OptionsListActorFor(pn)
+    if WheelOptions and WheelOptions.HasList(pn) then
+        return WheelOptions.Lists[pn]
+    end
+    return SCREENMAN:GetTopScreen():GetChild("OptionsList" .. pname(pn))
+end
+
 local t = Def.ActorFrame {
     Def.Sound {
         File=THEME:GetPathS("", "OpenCommandWindow"),
         CodeMessageCommand=function(self, params)
-            if params.Name == "OpenOpList" then
-                SCREENMAN:GetTopScreen():OpenOptionsList(params.PlayerNumber)
+            if params.Name ~= "OpenOpList" then return end
+
+            local pn = params.PlayerNumber
+            if WheelOptions and WheelOptions.HasList(pn) then
+                -- Theme-owned wheel: open the window we created.
+                WheelOptions.Open(pn)
+                self:play()
+                return
+            end
+
+            -- Stock screen: the engine screen's own method. On the theme-owned
+            -- wheel there is simply no window for this player (e.g. an unjoined
+            -- side pressed the code), so there is nothing to open.
+            local screen = SCREENMAN:GetTopScreen()
+            if screen:GetName() == "ScreenSelectMusic" then
+                screen:OpenOptionsList(pn)
                 self:play()
             end
         end
@@ -44,7 +69,7 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
         end,
         
         OnCommand=function(self)
-            OptionsListActor = SCREENMAN:GetTopScreen():GetChild("OptionsList" .. pname(pn))
+            OptionsListActor = OptionsListActorFor(pn)
         end,
         
         -- Move the list around when opened/closed
@@ -78,15 +103,16 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
         -- dynamically move the entire list's vertical position relative
         -- to what the player is currently selecting
         AdjustCommand=function(self, params)
-            if params.Player == pn then
-                -- Edge case since we don't need to scroll in Speed Mods
-                if params.Selection + 1 > 5 and OptionsListMenu == "Noteskins" then
-                    OptionsListActor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180 - (26 * (params.Selection - 5)))
-                elseif params.Selection + 1 > 9 then
-                    OptionsListActor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180 - (26 * (params.Selection - 9)))
-                else
-                    OptionsListActor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180)
-                end
+            if params.Player ~= pn then return end
+            local actor = OptionsListActor or OptionsListActorFor(pn)
+            if not actor then return end
+            -- Edge case since we don't need to scroll in Speed Mods
+            if params.Selection + 1 > 5 and OptionsListMenu == "Noteskins" then
+                actor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180 - (26 * (params.Selection - 5)))
+            elseif params.Selection + 1 > 9 then
+                actor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180 - (26 * (params.Selection - 9)))
+            else
+                actor:stoptweening():linear(0.1):y(SCREEN_CENTER_Y - 180)
             end
         end,
         

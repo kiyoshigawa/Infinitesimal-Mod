@@ -575,6 +575,25 @@ local function InputHandler(event)
 	local intent     = InputIntent.Horizontal(button)
 	local firstPress = InputIntent.IsFirstPress(event)
 
+	-- Engine command window. The window's own player never reaches this handler
+	-- while it is open (the engine consumes their input first), so this branch
+	-- is really about the OTHER side: do not let them scroll or start a song
+	-- underneath an open window. Joining above is still allowed, and a player
+	-- may still open their own window.
+	if WheelOptions.AnyOpen() then
+		if firstPress and InputIntent.IsOpenOptions(button) then
+			WheelOptions.Open(pn)
+		end
+		return
+	end
+
+	-- Select opens this player's window at any wheel stage, including the
+	-- difficulty list: Select is not one of the chart-confirm buttons (those are
+	-- Center/Start), so there is nothing to conflict with.
+	if firstPress and InputIntent.IsOpenOptions(button) then
+		if WheelOptions.Open(pn) then return end
+	end
+
 	if SongIsChosen then
 		-- Difficulty is owned by ChartDisplay. Each joined player confirms their own
 		-- chart; gameplay starts once every joined player has confirmed. Cancel must
