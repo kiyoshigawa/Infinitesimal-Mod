@@ -63,7 +63,7 @@ Start OutFox once so the song cache rebuilds, and let it finish; exit via the me
 ## Theme-Specific Toggles
 The following features can be configured via the Infinitesimal Options submenu of the operator menu:
 * Center Chart List: if there are less charts than the maximum visible number, the charts will be centered to the display.
-* Chart Preview: show the selected chart's arrows scrolling on the select music screen while choosing a difficulty.
+* Chart Preview: show the selected chart's arrows scrolling on the select music screen while choosing a difficulty. Preview fields are created once per session (both chart types at wheel load) and reused; set `SessionPreviewCache=false` in `Save/OutFoxPrefs.ini` to use the per-screen fallback instead.
 * Image Preview Only: videos will not be displayed while selecting a song, helps with performance on low-end hardware and/or memory usage.
 * Pause With Select Button: use the button mapped to "Select" to open the pause menu during gameplay.
 * Use Video Background: use a pre-rendered video for the animated theme background, requires restart.
@@ -97,7 +97,7 @@ If you're looking for assets such as more noteskins or folder icons from StepF2/
 ## Current Limitations and Issues
 The theme currently has a few limitations that are beyond our reach. Here is a list of known limitations and issues:
 * Some chart effects will be missing or broken from incomplete parsing
-* Chart previews re-create their note field when the chart's steps type or the player's noteskin changes, which can cause a brief hitch on that switch
+* Chart previews create their note fields once per session; the first song wheel load of a session pays that cost, and changing the note skin re-creates the affected field, so both can cause a brief hitch
 * Switching timing modes does not update the list of judgement graphics, simply reloading the current screen or changing screens will regenerate the list
 * Infinitesimal has a few issues when running on Project OutFox Alpha V that are being investigated. Stick with standalone Alpha 4 LTS for the time being when playing Infinitesimal
 

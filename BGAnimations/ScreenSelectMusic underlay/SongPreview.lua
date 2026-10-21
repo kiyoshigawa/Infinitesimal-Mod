@@ -148,6 +148,7 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
     local Enabled = false      -- this screen owns a preview; set in OnCommand
     local Shown = false        -- difficulty stage is open
     local BuiltSignature = nil -- signature the live field was last built for
+    local TypesSongDir = nil   -- song we last pre-created fields for
 
     t[#t+1] = Def.ActorFrame {
         Name = "ChartPreview",
@@ -162,10 +163,14 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
             -- Force a build on the next poll; the reveal happens after it, so no
             -- empty frame is shown. Never build from inside a handler.
             BuiltSignature = nil
+            local preview = self:GetChild("PreviewNotefield")
+            if preview then preview:playcommand("SetShown", { Shown = true }) end
         end,
         SongUnchosenMessageCommand=function(self)
             Shown = false
             self:visible(false)
+            local preview = self:GetChild("PreviewNotefield")
+            if preview then preview:playcommand("SetShown", { Shown = false }) end
         end,
 
         -- ChartDisplay is about to change this side's StepsType, which switches the
@@ -177,6 +182,11 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
             -- Force the poll to rebuild and reveal, even if the signature happens to
             -- match (the field must be re-made for the new column count).
             BuiltSignature = nil
+            -- Visibility only: safe inside a broadcast, and it stops the render
+            -- target from capturing a field with the old column count. The transient
+            -- hide keeps the show-when-built intent.
+            local preview = self:GetChild("PreviewNotefield")
+            if preview then preview:playcommand("HideNow") end
         end,
 
         -- Mount the preview shell here, while the screen's own commands still run:
@@ -186,16 +196,53 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
         OnCommand=function(self)
             Enabled = (InfinitesimalPreviewScreen == true)
             if not Enabled then return end
-            self:AddChildFromPath(THEME:GetPathB("", "NotefieldPreview"))
+            -- Session-persistent host when available; otherwise the in-screen fallback.
+            -- SessionPreviewCache=false forces the fallback (escape hatch).
+            local useCache = LoadModule("Config.Load.lua")("SessionPreviewCache", "Save/OutFoxPrefs.ini") ~= false
+            local cache = useCache and _G.InfinitesimalPreviewCache or nil
+            if cache and cache.Host then
+                self:AddChildFromPath(THEME:GetPathB("", "PreviewCacheClient"))
+            else
+                self:AddChildFromPath(THEME:GetPathB("", "NotefieldPreview"))
+            end
             self:sleep(0.05):queuecommand("PollPreview")
         end,
 
+        -- Leaving the screen must stop the host capturing; the host also has a
+        -- heartbeat fallback for abrupt teardown.
+        OffCommand=function(self)
+            local preview = self:GetChild("PreviewNotefield")
+            if preview then preview:playcommand("SetShown", { Shown = false }) end
+        end,
+
         PollPreviewCommand=function(self)
+            local preview = self:GetChild("PreviewNotefield")
+            if preview then preview:playcommand("Heartbeat") end
+
+            -- Pre-create hidden fields for every chart type of the highlighted song,
+            -- i.e. at the wheel, so opening the difficulty stage and crossing between
+            -- chart types never pays a field creation cost. Only runs when the song
+            -- changes; chart types are a property of the song, not of the selection.
+            if preview then
+                local song = GAMESTATE:GetCurrentSong()
+                local dir = song and song:GetSongDir() or ""
+                if dir ~= TypesSongDir then
+                    TypesSongDir = dir
+                    local types = {}
+                    if song then
+                        for _, steps in ipairs(song:GetAllSteps()) do
+                            local st = ToEnumShortString(steps:GetStepsType())
+                            if not types[st] then types[st] = steps end
+                        end
+                    end
+                    preview:playcommand("EnsureTypes", { Types = types })
+                end
+            end
+
             -- Builds happen here, outside any message broadcast: mutating actors in a
             -- handler changes MessageManager's subscriber list mid-broadcast and
             -- segfaults the engine.
             if Shown then
-                local preview = self:GetChild("PreviewNotefield")
                 if preview then
                     local sig = ChartSignature()
                     if sig ~= BuiltSignature then

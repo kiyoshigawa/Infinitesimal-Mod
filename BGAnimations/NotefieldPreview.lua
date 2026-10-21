@@ -1,16 +1,20 @@
--- Chart preview shell: one persistent ActorFrameTexture per enabled player, and one
--- NoteField per player that is reused across chart changes.
+-- Chart preview shell: one persistent ActorFrameTexture per enabled player, plus one
+-- NoteField per (player, StepsType), created once and then reused.
 --
 -- The AFT (and the Sprite that shows it) are created once when the screen loads and
 -- are never destroyed, so the texture is never re-registered and a stale texture
 -- cannot be displayed.
 --
--- The chart itself lives in a separate NoteField actor (BGAnimations/PreviewField.lua).
--- A chart change reloads the existing field, which costs a few tens of milliseconds;
--- the field is only recreated when the StepsType or the preferred noteskin changes,
--- because the column count and the noteskin textures have to change with them, and
--- drawing a field whose columns no longer match the engine style aborts in
--- ReceptorArrowRow::DrawPrimitives.
+-- One field per StepsType is what keeps chart-type crossings cheap: creating a field
+-- costs 120-570 ms (cold noteskin), while switching between pre-created fields is a
+-- visibility swap plus a reload on the selected one (a few tens of milliseconds).
+-- Fields are pre-created hidden by EnsureTypes as soon as the highlighted song's
+-- chart types are known, i.e. at the wheel, before the difficulty stage is opened;
+-- crossing between chart types then never creates anything.
+--
+-- A field whose columns no longer match the engine style aborts in
+-- ReceptorArrowRow::DrawPrimitives, which is why a field is never reused across
+-- StepsTypes and why BuildChart hides the preview before ChartDisplay switches style.
 --
 -- BuildChart is invoked from SongPreview's poll (a tween), never from a message
 -- handler: mutating actors inside a broadcast segfaults the engine.
@@ -21,39 +25,84 @@ local PlayerPos = GAMESTATE:GetNumPlayersEnabled() == 1 and "OnePlayerTwoSides" 
 local AFTWidth = GAMESTATE:GetNumPlayersEnabled() == 1 and 640 or 320
 
 local AFTs = {}
-local Fields = {}
-local FieldType = {}
-local FieldSkin = {}
+local Fields = {}    -- pn -> StepsType string -> NoteField actor
+local FieldSkin = {} -- pn -> StepsType string -> preferred noteskin it was built with
 
-local function CreateField(pn, AFT)
-	AFT:RemoveChild("PreviewField")
-	-- PreviewField.lua reads its player from this global at chunk load.
+local function FieldName(stype)
+	return "PreviewField_" .. stype
+end
+
+local function PrefSkin(pn)
+	local pnNoteField = PlayerNumber:Reverse()[pn]
+	return GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions("ModsLevel_Preferred"):NoteSkin()
+end
+
+local function NeedsField(pn, stype, skin)
+	local field = Fields[pn] and Fields[pn][stype]
+	return not field or not FieldSkin[pn] or FieldSkin[pn][stype] ~= skin
+end
+
+-- Create (and build) the field for one (player, StepsType). Left hidden; BuildChart
+-- reveals whichever field matches the selected chart.
+local function CreateField(pn, AFT, stype, Steps, skin, withData)
+	local name = FieldName(stype)
+	AFT:RemoveChild(name)
 	InfinitesimalPreviewFieldPN = pn
+	InfinitesimalPreviewFieldKey = stype
 	AFT:AddChildFromPath(THEME:GetPathB("", "PreviewField"))
-	local field = AFT:GetChild("PreviewField")
-	Fields[pn] = field
-	if field then field:playcommand("Build") end
+	local field = AFT:GetChild(name)
+
+	Fields[pn] = Fields[pn] or {}
+	FieldSkin[pn] = FieldSkin[pn] or {}
+	Fields[pn][stype] = field
+	FieldSkin[pn][stype] = skin
+
+	if field then
+		field:playcommand("Build", { Steps = Steps, WithData = withData })
+		field:visible(false)
+	end
 	return field
 end
 
 local t = Def.ActorFrame {
 	Name = "PreviewNotefield",
 
+	-- Pre-create hidden fields for the chart types present in the highlighted song.
+	-- params.Types is { [StepsType string] = Steps } used only to build the columns
+	-- and noteskin; the selected chart is loaded later by BuildChart.
+	EnsureTypesCommand=function(self, params)
+		local types = params and params.Types
+		if not types then return end
+		for _, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
+			local AFT = AFTs[pn]
+			if AFT then
+				local skin = PrefSkin(pn)
+				for stype, Steps in pairs(types) do
+					if NeedsField(pn, stype, skin) then
+						CreateField(pn, AFT, stype, Steps, skin, false)
+					end
+				end
+			end
+		end
+	end,
+
 	BuildChartCommand=function(self)
 		for _, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
 			local AFT = AFTs[pn]
 			local Steps = GAMESTATE:GetCurrentSteps(pn)
 			if AFT and Steps then
-				local pnNoteField = PlayerNumber:Reverse()[pn]
 				local stype = ToEnumShortString(Steps:GetStepsType())
-				local skin = GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions("ModsLevel_Preferred"):NoteSkin()
+				local skin = PrefSkin(pn)
 
-				if not Fields[pn] or FieldType[pn] ~= stype or FieldSkin[pn] ~= skin then
-					CreateField(pn, AFT)
-					FieldType[pn] = stype
-					FieldSkin[pn] = skin
+				if NeedsField(pn, stype, skin) then
+					CreateField(pn, AFT, stype, Steps, skin, true)
 				else
-					Fields[pn]:playcommand("Build")
+					Fields[pn][stype]:playcommand("Build", { Steps = Steps, WithData = true })
+				end
+
+				-- Show only the field that matches the selected chart's StepsType.
+				for otherType, field in pairs(Fields[pn]) do
+					if field then field:visible(otherType == stype) end
 				end
 			end
 		end

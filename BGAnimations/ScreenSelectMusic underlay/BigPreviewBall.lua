@@ -16,6 +16,9 @@ for pn in ivalues(GAMESTATE:GetHumanPlayers()) do
     RefreshCommand=function(self)
       if isSelectingDifficulty then
         local Chart = GAMESTATE:GetCurrentSteps(pn)
+        -- The chart preview pre-warms fields at the wheel, which can leave the current
+        -- steps unset for a moment; never index a nil chart here.
+        if not Chart then return end
         local ChartMeter = Chart:GetMeter()
         if ChartMeter == 99 then ChartMeter = "??" end
         self:GetChild("BigPreviewBallContainer_"..pn):GetChild("BigPreviewBall"):diffuse(ChartTypeToColor(Chart))
