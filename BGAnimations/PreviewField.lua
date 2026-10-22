@@ -75,6 +75,13 @@ return Def.NoteField {
     BuildCommand=function(self, params)
         local Steps = (params and params.Steps) or GAMESTATE:GetCurrentSteps(pn)
         if not Steps then return end
+
+        -- Last line of defence in front of the only engine call that aborts: a
+        -- chart type this player count may not load never reaches ChangeReload.
+        -- The rule and the engine reason are in Scripts/01 ChartEligibility.lua.
+        ChartEligibility.Probe(Steps, pn)
+        if not ChartEligibility.IsAllowed(Steps) then return end
+
         local withData = not (params and params.WithData == false)
 
         LoadModule("Player.SetSpeed.lua")(pn)

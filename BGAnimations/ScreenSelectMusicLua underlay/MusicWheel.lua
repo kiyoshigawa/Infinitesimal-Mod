@@ -79,8 +79,14 @@ local function BuildData()
 	local genreSongs = {}
 	local allPlayable = {}
 
+	-- A song is listed only when it has a chart the current player count may
+	-- actually load. This is deliberately the theme's rule
+	-- (Scripts/01 ChartEligibility.lua), not the engine's playable list: with two
+	-- players the engine still offers couple/routine, and those are the charts
+	-- that abort. Joining a side reloads this screen, so BuildData() re-runs with
+	-- the new count.
 	for Song in ivalues(SONGMAN:GetAllSongs() or {}) do
-		if #SongUtil.GetPlayableSteps(Song) > 0 then
+		if ChartEligibility.HasAllowedChart(Song) then
 			allPlayable[#allPlayable+1] = Song
 
 			local folder = Song:GetGroupName()
@@ -551,12 +557,16 @@ local function StartGameplay()
 	-- ScreenGameplay::Init asserts (hard crash).
 	GAMESTATE:SetCurrentPlayMode("PlayMode_Regular")
 	GAMESTATE:SetCurrentStyle(StyleForSelection() or (GAMESTATE:GetNumSidesJoined() > 1 and "versus" or "single"))
-	-- Backstop: never transition with a missing chart; let the player reselect.
+	-- Backstop: never transition with a missing chart, or with one this player
+	-- count may not load; let the player reselect.
 	for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
-		if GAMESTATE:IsPlayerEnabled(pn) and not GAMESTATE:GetCurrentSteps(pn) then
-			MESSAGEMAN:Broadcast("LockedDifficultyDenied")
-			Transitioning = false
-			return
+		if GAMESTATE:IsPlayerEnabled(pn) then
+			local steps = GAMESTATE:GetCurrentSteps(pn)
+			if not steps or not ChartEligibility.IsAllowed(steps) then
+				MESSAGEMAN:Broadcast("LockedDifficultyDenied")
+				Transitioning = false
+				return
+			end
 		end
 	end
 	-- Save each side's chosen chart, and persist each joined profile's resume record.

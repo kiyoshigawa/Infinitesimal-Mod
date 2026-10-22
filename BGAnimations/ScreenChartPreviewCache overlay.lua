@@ -20,22 +20,12 @@
 
 local PM = { PLAYER_1, PLAYER_2 }
 
--- Chart types ChartDisplay removes (routine/couple, which crash) and lights, which is
--- not a player style. Matched as substrings because the short names are prefixed
--- (e.g. "Pump_Routine").
-local function IsExcluded(stype)
-	local upper = ToUpper(stype)
-	return string.find(upper, "ROUTINE", 1, true) ~= nil
-		or string.find(upper, "COUPLE", 1, true) ~= nil
-		or string.find(upper, "LIGHTS", 1, true) ~= nil
-end
-
 local HOST_ROOT
 local AFTs = {}      -- pn -> { Actor, Width, Texture }
 local Fields = {}    -- pn -> { [StepsType] = field }
 local FieldSkin = {} -- pn -> { [StepsType] = preferred noteskin it was built with }
 local Reps = nil     -- [StepsType] = representative Steps (session cache)
-local WantedCache = nil -- { Sides = n, Game = name, Types = {...} }
+local WantedCache = nil -- { Sides = n, Types = { [type key] = true } }
 local LastHeartbeat = 0
 
 local Cache = {
@@ -58,54 +48,17 @@ local function PrefSkin(pn)
 	return GAMESTATE:GetPlayerState(pnNoteField):GetPlayerOptions("ModsLevel_Preferred"):NoteSkin()
 end
 
--- Chart types that can be shown for the current number of joined sides: the game's
--- styles for that side count, minus the types ChartDisplay removes (routine/couple)
--- and lights. For a single joined side, both one-player style types count: single is
--- OnePlayerOneSide and double/halfdouble are OnePlayerTwoSides, and all of them are
--- playable with one player. Falls back to the current song's types.
+-- Chart types that may be previewed for the current number of joined sides. The
+-- rule lives in Scripts/01 ChartEligibility.lua; this file only asks it, so the
+-- preview can never pre-build a type the difficulty list does not offer.
 local function WantedTypes()
-	local sides = GAMESTATE:GetNumSidesJoined()
-	if sides < 1 then sides = 1 end
-	local game = GAMESTATE:GetCurrentGame()
-	local gameName = game and game:GetName() or ""
-
-	if WantedCache and WantedCache.Sides == sides and WantedCache.Game == gameName then
+	local sides = ChartEligibility.PlayerSides()
+	if WantedCache and WantedCache.Sides == sides then
 		return WantedCache.Types
 	end
 
-	local allowed = {}
-	if sides > 1 then
-		allowed["TwoPlayersTwoSides"] = true
-	else
-		allowed["OnePlayerOneSide"] = true
-		allowed["OnePlayerTwoSides"] = true
-	end
-
-	local set = {}
-	if game then
-		local ok, styles = pcall(function() return GAMEMAN:GetStylesForGame(gameName) end)
-		if ok and type(styles) == "table" then
-			for _, style in ipairs(styles) do
-				local st = ToEnumShortString(style:GetStepsType())
-				local sty = ToEnumShortString(style:GetStyleType())
-				if allowed[sty] and not IsExcluded(st) then set[st] = true end
-			end
-		end
-	end
-
-	local n = 0
-	for _ in pairs(set) do n = n + 1 end
-	if n == 0 then
-		local Song = GAMESTATE:GetCurrentSong()
-		if Song then
-			for _, steps in ipairs(Song:GetAllSteps()) do
-				local st = ToEnumShortString(steps:GetStepsType())
-				if not IsExcluded(st) then set[st] = true end
-			end
-		end
-	end
-
-	WantedCache = { Sides = sides, Game = gameName, Types = set }
+	local set = ChartEligibility.AllowedTypes(sides)
+	WantedCache = { Sides = sides, Types = set }
 	return set
 end
 
@@ -126,8 +79,8 @@ local function TypeRepresentatives(wanted)
 	local found = 0
 	for _, song in ipairs(SONGMAN:GetAllSongs()) do
 		for _, steps in ipairs(song:GetAllSteps()) do
-			local st = ToEnumShortString(steps:GetStepsType())
-			if missing[st] and not Reps[st] then
+			local st = ChartEligibility.TypeKey(steps)
+			if st and missing[st] and not Reps[st] then
 				Reps[st] = steps
 				found = found + 1
 			end
@@ -276,31 +229,42 @@ end
 function Cache.Build()
 	if not Ensure() then return end
 
+	local AnyBuilt = false
 	for _, pn in ipairs(EnabledPlayers()) do
 		local Steps = GAMESTATE:GetCurrentSteps(pn)
 		local aft = AFTs[pn]
-		if aft and aft.Actor and Steps then
-			local stype = ToEnumShortString(Steps:GetStepsType())
-			local skin = PrefSkin(pn)
-			local field = Fields[pn] and Fields[pn][stype]
-
-			if not field or (FieldSkin[pn] and FieldSkin[pn][stype] ~= skin) then
-				field = CreateField(pn, stype, Steps, skin)
+		if aft and aft.Actor then
+			if not Steps or not ChartEligibility.IsAllowed(Steps) then
+				-- A rejected chart must never reach the loader: a 10-track couple chart
+				-- under the two-player couple style aborts the engine. Hide everything
+				-- this side owns and wait for a selectable chart.
+				for _, f in pairs(Fields[pn] or {}) do
+					if f then f:visible(false) end
+				end
 			else
-				-- Always reload, even when the same chart object is selected again: the
-				-- shared PlayerState is reset by the gameplay screen, so a field that is
-				-- not reloaded on re-entry draws nothing (black preview).
-				field:playcommand("Build", { Steps = Steps, WithData = true })
-			end
+				local stype = ChartEligibility.TypeKey(Steps)
+				local skin = PrefSkin(pn)
+				local field = Fields[pn] and Fields[pn][stype]
 
-			for other, f in pairs(Fields[pn]) do
-				if f then f:visible(other == stype) end
+				if not field or (FieldSkin[pn] and FieldSkin[pn][stype] ~= skin) then
+					field = CreateField(pn, stype, Steps, skin)
+				else
+					-- Always reload, even when the same chart object is selected again: the
+					-- shared PlayerState is reset by the gameplay screen, so a field that is
+					-- not reloaded on re-entry draws nothing (black preview).
+					field:playcommand("Build", { Steps = Steps, WithData = true })
+				end
+
+				for other, f in pairs(Fields[pn]) do
+					if f then f:visible(other == stype) end
+				end
+				if field then field:visible(true) end
+				AnyBuilt = true
 			end
-			if field then field:visible(true) end
 		end
 	end
 
-	if Cache.WantShown then Cache.Show() else Cache.Hide() end
+	if AnyBuilt and Cache.WantShown then Cache.Show() else Cache.Hide() end
 end
 
 local t = Def.ActorFrame {

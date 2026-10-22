@@ -69,13 +69,58 @@ reads `GAMESTATE:GetCurrentStyle()` to the select screen.
 re-sets it per field before drawing, so several cached fields cannot corrupt each
 other's rendering.
 
+## Which charts may be previewed
+
+This is the one engine behaviour in this document that is not just a quirk but an
+abort, so the theme guards it in one place: `Scripts/01 ChartEligibility.lua`.
+Nothing else in the theme decides which chart types are safe.
+
+Pump registers seven styles. Dumped from their static objects in this build:
+
+| style | chart type | engine style type | columns/player |
+|---|---|---|---|
+| `single` | pump_single | 0 `OnePlayerOneSide` | 5 |
+| `versus` | pump_single | 1 `TwoPlayersTwoSides` | 5 |
+| `halfdouble` | pump_halfdouble | 2 `OnePlayerTwoSides` | 6 |
+| `double` | pump_double | 2 `OnePlayerTwoSides` | 10 |
+| `couple` | pump_couple | 1 `TwoPlayersTwoSides` | 5 |
+| `couple-edit` | pump_couple | 2 `OnePlayerTwoSides` | 10 |
+| `routine` | pump_routine | 3 `TwoPlayersSharedSides` | 10 |
+
+The engine's compatible-style filter accepts style types 0 and 2 for one player and
+1 and 3 for two players, and only styles whose eligible flag is set. `couple-edit`
+is the one style with that flag cleared in this build, which means **one player has
+no couple style at all** and the engine never offers couple charts. `ChangeReload`
+then resolves the style from the chart's own type and the number of **human**
+players, and builds one column per track in the chart. A couple chart has 10
+tracks, so:
+
+- one player has no compatible couple style; the engine returns no playable couple
+  chart and nothing can select one;
+- two players resolve to `couple` (5 columns per player) and abort at column 5.
+
+Therefore one player may use single/halfdouble/double, two players may use single
+only, and couple and routine are never offered. The difficulty
+list, the song wheel, the group list and every preview build ask
+`ChartEligibility`; `PreviewField.BuildCommand` refuses a rejected chart as the last
+line of defence in front of the loader. Do not reintroduce a fallback that
+"loads all charts again when the filtered list is empty" — that is how a couple
+chart reaches the loader with two players.
+
+The module reads only the joined-side count. It deliberately does not read
+`AutoSetStyle`, the current style, or style types, so flipping an engine setting
+cannot change which charts are considered safe.
+
 ## Architecture
 
+- `Scripts/01 ChartEligibility.lua` — the rule: which chart types the current number
+  of joined sides may offer and preview. Every list, the song wheel, the group list
+  and every preview build ask it; it is the only place that reads the player count.
 - `BGAnimations/ScreenChartPreviewCache overlay.lua` — a dedicated overlay screen
   (registered in `[Common] OverlayScreens`). Overlay screens are created once per theme
   load and updated/drawn every frame, which is what lets the fields outlive the wheel
   screen. It owns the render targets and one field per (player, StepsType), pre-creates
-  them hidden for the chart types the game offers for the current number of joined
+  them hidden for the types `ChartEligibility` allows for the current number of joined
   sides, and exposes `Show/Hide/SetShown/Build/Ensure` through the
   `InfinitesimalPreviewCache` global.
 - `BGAnimations/PreviewCacheAFT.lua` — one render target, width part of its name so a

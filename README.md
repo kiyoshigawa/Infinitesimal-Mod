@@ -63,7 +63,7 @@ Start OutFox once so the song cache rebuilds, and let it finish; exit via the me
 ## Theme-Specific Toggles
 The following features can be configured via the Infinitesimal Options submenu of the operator menu:
 * Center Chart List: if there are less charts than the maximum visible number, the charts will be centered to the display.
-* Chart Preview: show the selected chart's arrows scrolling on the select music screen while choosing a difficulty. Preview fields are created once per session (both chart types at wheel load) and reused; set `SessionPreviewCache=false` in `Save/OutFoxPrefs.ini` to use the per-screen fallback instead.
+* Chart Preview: show the selected chart's arrows scrolling on the select music screen while choosing a difficulty. Preview fields are created once per session (one per chart type this player count may load) and reused; set `SessionPreviewCache=false` in `Save/OutFoxPrefs.ini` to use the per-screen fallback instead. Chart types are filtered per player count: one player may use single/halfdouble/double, two players single only; couple and routine are not offered (see `Scripts/01 ChartEligibility.lua`).
 * Image Preview Only: videos will not be displayed while selecting a song, helps with performance on low-end hardware and/or memory usage.
 * Pause With Select Button: use the button mapped to "Select" to open the pause menu during gameplay.
 * Use Video Background: use a pre-rendered video for the animated theme background, requires restart.

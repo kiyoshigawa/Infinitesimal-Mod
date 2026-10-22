@@ -145,6 +145,21 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
         return sig
     end
 
+    -- Every enabled side must hold a chart this player count may load. A rejected
+    -- selection (or a side with no chart yet) shows no preview rather than asking
+    -- the engine to build something that aborts.
+    local function SelectionAllowed()
+        local any = false
+        for _, pn in ipairs({ PLAYER_1, PLAYER_2 }) do
+            if GAMESTATE:IsPlayerEnabled(pn) then
+                any = true
+                local Steps = GAMESTATE:GetCurrentSteps(pn)
+                if not Steps or not ChartEligibility.IsAllowed(Steps) then return false end
+            end
+        end
+        return any
+    end
+
     local Enabled = false      -- this screen owns a preview; set in OnCommand
     local Shown = false        -- difficulty stage is open
     local BuiltSignature = nil -- signature the live field was last built for
@@ -231,8 +246,10 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
                     local types = {}
                     if song then
                         for _, steps in ipairs(song:GetAllSteps()) do
-                            local st = ToEnumShortString(steps:GetStepsType())
-                            if not types[st] then types[st] = steps end
+                            if ChartEligibility.IsAllowed(steps) then
+                                local st = ChartEligibility.TypeKey(steps)
+                                if st and not types[st] then types[st] = steps end
+                            end
                         end
                     end
                     preview:playcommand("EnsureTypes", { Types = types })
@@ -244,14 +261,22 @@ if LoadModule("Config.Load.lua")("ChartPreview", "Save/OutFoxPrefs.ini") then
             -- segfaults the engine.
             if Shown then
                 if preview then
-                    local sig = ChartSignature()
+                    local allowed = SelectionAllowed()
+                    -- Eligibility is part of the signature, so a switch to or from a
+                    -- rejected chart triggers one action rather than one per poll.
+                    local sig = ChartSignature() .. (allowed and "|ok" or "|no")
                     if sig ~= BuiltSignature then
-                        preview:playcommand("BuildChart")
-                        -- Recorded after the build: if a side has no steps yet the
-                        -- signature differs again next tick, so it self-heals instead
-                        -- of being marked done.
                         BuiltSignature = sig
-                        self:visible(true)
+                        if allowed then
+                            preview:playcommand("BuildChart")
+                            self:visible(true)
+                        else
+                            -- Hiding does not touch subscriptions; HideNow also stops
+                            -- the cache host capturing (unknown command is a no-op on
+                            -- the in-screen fallback).
+                            preview:playcommand("HideNow")
+                            self:visible(false)
+                        end
                     end
                 end
             end

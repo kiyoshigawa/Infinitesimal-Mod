@@ -170,16 +170,13 @@ local t = Def.ActorFrame {
                 end
             end
 
-            -- Couple and Routine crashes the game :(
-            for i = #ChartArray, 1, -1 do
-                if string.find(ToUpper(ChartArray[i]:GetStepsType()), "ROUTINE") or
-                    string.find(ToUpper(ChartArray[i]:GetStepsType()), "COUPLE") then
-                    table.remove(ChartArray, i)
-                end
-            end
-
-            -- If no charts are left, load all of them again in an attempt to avoid other crashes
-            if #ChartArray == 0 then ChartArray = SongUtil.GetPlayableSteps(CurrentSong) end
+            -- Keep only the chart types this theme can safely load for the current
+            -- number of player sides. The rule (and the engine reason for it) lives
+            -- in Scripts/01 ChartEligibility.lua; the preview asks the same question,
+            -- so the list and the preview cannot drift apart. The old couple/routine
+            -- string test and the "if empty, load everything again" fallback both
+            -- re-admitted types that abort the engine, so neither remains.
+            ChartArray = ChartEligibility.FilterAllowed(ChartArray)
             table.sort(ChartArray, SortCharts)
         end
 

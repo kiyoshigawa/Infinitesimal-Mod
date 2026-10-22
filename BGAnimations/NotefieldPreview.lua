@@ -78,7 +78,7 @@ local t = Def.ActorFrame {
 			if AFT then
 				local skin = PrefSkin(pn)
 				for stype, Steps in pairs(types) do
-					if NeedsField(pn, stype, skin) then
+					if ChartEligibility.IsAllowed(Steps) and NeedsField(pn, stype, skin) then
 						CreateField(pn, AFT, stype, Steps, skin, false)
 					end
 				end
@@ -90,19 +90,26 @@ local t = Def.ActorFrame {
 		for _, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
 			local AFT = AFTs[pn]
 			local Steps = GAMESTATE:GetCurrentSteps(pn)
-			if AFT and Steps then
-				local stype = ToEnumShortString(Steps:GetStepsType())
-				local skin = PrefSkin(pn)
+			if AFT then
+				if Steps and ChartEligibility.IsAllowed(Steps) then
+					local stype = ChartEligibility.TypeKey(Steps)
+					local skin = PrefSkin(pn)
 
-				if NeedsField(pn, stype, skin) then
-					CreateField(pn, AFT, stype, Steps, skin, true)
+					if NeedsField(pn, stype, skin) then
+						CreateField(pn, AFT, stype, Steps, skin, true)
+					else
+						Fields[pn][stype]:playcommand("Build", { Steps = Steps, WithData = true })
+					end
+
+					-- Show only the field that matches the selected chart's StepsType.
+					for otherType, field in pairs(Fields[pn]) do
+						if field then field:visible(otherType == stype) end
+					end
 				else
-					Fields[pn][stype]:playcommand("Build", { Steps = Steps, WithData = true })
-				end
-
-				-- Show only the field that matches the selected chart's StepsType.
-				for otherType, field in pairs(Fields[pn]) do
-					if field then field:visible(otherType == stype) end
+					-- Rejected or missing: hide everything this side owns.
+					for _, field in pairs(Fields[pn] or {}) do
+						if field then field:visible(false) end
+					end
 				end
 			end
 		end

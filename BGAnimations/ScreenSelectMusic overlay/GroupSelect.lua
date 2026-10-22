@@ -25,11 +25,13 @@ if SONGMAN:GetNumSongGroups() == 0 then
     return Def.Actor {}
 else
 
--- Iterate through the song groups and check if they have AT LEAST one song with valid charts.
--- If so, add them to the group list.
+-- Iterate through the song groups and check if they have AT LEAST one song with a
+-- chart the current player count may load (Scripts/01 ChartEligibility.lua).
+-- If so, add them to the group list. The song wheel uses the same rule, so an
+-- empty group can never be opened.
 for Group in ivalues(SONGMAN:GetSongGroupNames()) do
     for Song in ivalues(SONGMAN:GetSongsInGroup(Group)) do
-        if #SongUtil.GetPlayableSteps(Song) > 0 then
+        if ChartEligibility.HasAllowedChart(Song) then
             Groups[#Groups+1] = Group
             break
         end
