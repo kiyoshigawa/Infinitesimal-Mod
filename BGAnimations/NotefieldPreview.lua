@@ -26,6 +26,7 @@ local AFTWidth = GAMESTATE:GetNumPlayersEnabled() == 1 and 640 or 320
 
 local AFTs = {}
 local Fields = {}    -- pn -> StepsType string -> NoteField actor
+local CurrentType = {} -- pn -> StepsType string currently shown (fallback speed tick)
 local FieldSkin = {} -- pn -> StepsType string -> preferred noteskin it was built with
 
 local function FieldName(stype)
@@ -105,13 +106,25 @@ local t = Def.ActorFrame {
 					for otherType, field in pairs(Fields[pn]) do
 						if field then field:visible(otherType == stype) end
 					end
+					CurrentType[pn] = stype
 				else
 					-- Rejected or missing: hide everything this side owns.
 					for _, field in pairs(Fields[pn] or {}) do
 						if field then field:visible(false) end
 					end
+					CurrentType[pn] = nil
 				end
 			end
+		end
+	end,
+
+	-- Fallback counterpart of the cache host's RefreshSpeed. SongPreview's poll calls
+	-- Heartbeat every 50 ms; only the visible field for each player is ticked.
+	HeartbeatCommand=function(self)
+		for _, pn in ipairs(GAMESTATE:GetEnabledPlayers()) do
+			local stype = CurrentType[pn]
+			local field = stype and Fields[pn] and Fields[pn][stype]
+			if field then field:playcommand("SpeedTick") end
 		end
 	end,
 }

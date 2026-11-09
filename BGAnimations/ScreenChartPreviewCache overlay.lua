@@ -267,6 +267,22 @@ function Cache.Build()
 	if AnyBuilt and Cache.WantShown then Cache.Show() else Cache.Hide() end
 end
 
+-- Refresh the preview's X-mod scroll normalization for the current playhead. Called
+-- from the wheel poll (via the client heartbeat) while the difficulty stage is open.
+-- Only sets a scalar mod on an existing field; creates/reloads nothing.
+function Cache.RefreshSpeed()
+	if not Cache.WantShown then return end
+
+	for _, pn in ipairs(EnabledPlayers()) do
+		local Steps = GAMESTATE:GetCurrentSteps(pn)
+		if Steps and ChartEligibility.IsAllowed(Steps) then
+			local stype = ChartEligibility.TypeKey(Steps)
+			local field = Fields[pn] and Fields[pn][stype]
+			if field then field:playcommand("SpeedTick") end
+		end
+	end
+end
+
 local t = Def.ActorFrame {
 	Name = "PreviewCacheHost",
 

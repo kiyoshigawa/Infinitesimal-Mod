@@ -53,6 +53,30 @@ local function NoteDataFor(Steps)
     return nil
 end
 
+-- The Steps this field is currently showing, and the last X multiplier pushed into
+-- it. Both are per field (this file runs once per created field).
+local ChartSteps = nil
+local LastAppliedX = nil
+
+-- Chart scroll ratio at a beat, from the chart's own TimingData (#SCROLLS). Returns
+-- 1 for anything we will not model: missing timing, no segments, non-finite or
+-- non-positive ratios (negative-scroll gimmicks).
+local function ScrollRatioAt(TD, beat)
+    if not TD or type(beat) ~= "number" then return 1 end
+    local ok, segs = pcall(function() return TD:GetScrolls(true) end)
+    if not ok or type(segs) ~= "table" or #segs == 0 then return 1 end
+
+    local ratio = 1
+    for i = 1, #segs do
+        local b, r = segs[i][1], segs[i][2]
+        if type(b) ~= "number" or b > beat then break end
+        if type(r) == "number" then ratio = r end
+    end
+
+    if type(ratio) ~= "number" or ratio ~= ratio or ratio <= 0 then return 1 end
+    return ratio
+end
+
 return Def.NoteField {
     Name = "PreviewField_" .. key,
     Player = pnNoteField,
@@ -90,6 +114,13 @@ return Def.NoteField {
         self:ModsFromString(ModString)
         self:GetPlayerOptions("ModsLevel_Current"):StealthPastReceptors(true, true)
 
+        -- The engine's scroll map is not rebuilt for a menu field, so X-mod spacing
+        -- loses the chart's #SCROLLS here. Normalize with SpeedTick; reset the
+        -- bookkeeping so a rebuild is traced and re-applied.
+        ChartSteps = Steps
+        LastAppliedX = nil
+        self:playcommand("SpeedTick")
+
         if withData then
             local NoteData = NoteDataFor(Steps)
             if NoteData then self:SetNoteDataFromLua(NoteData) end
@@ -98,5 +129,48 @@ return Def.NoteField {
         -- Never AutoPlay(true) on a menu field: it leaks ~180 MB/min. The arrows keep
         -- scrolling without it because the field's position comes from the music clock.
         self:AutoPlay(false)
+    end,
+
+    -- Called after each build and every poll (via the cache host / fallback heartbeat).
+    -- Multiplies the player's X mod by the chart's scroll ratio at the playhead so the
+    -- preview's note spacing matches gameplay on charts that rescale #BPMS/#SCROLLS.
+    -- No note data or field is rebuilt here: at most a scalar mod is set, and only when
+    -- it changes. C-mods ignore scroll segments already; M/A-mods are left alone.
+    SpeedTickCommand=function(self)
+        if not ChartSteps then return end
+        local ps = GAMESTATE:GetPlayerState(pnNoteField)
+        if not ps then return end
+
+        local po = ps:GetPlayerOptions("ModsLevel_Preferred")
+        if not po then return end
+
+        local timeSpacing = po:TimeSpacing()
+        local maxBPM = po:MaxScrollBPM()
+        local avgBPM = 0
+        local okAvg, avg = pcall(function() return po:AvarageScrollBPM() end)
+        if okAvg and type(avg) == "number" then avgBPM = avg end
+        if (type(timeSpacing) == "number" and timeSpacing > 0)
+            or (type(maxBPM) == "number" and maxBPM > 0)
+            or avgBPM > 0 then
+            return
+        end
+
+        local base = po:XMod()
+        if type(base) ~= "number" or base ~= base then
+            base = po:ScrollSpeed()
+        end
+        if type(base) ~= "number" or base ~= base then return end
+
+        local pos = ps:GetSongPosition()
+        local beat = pos and pos:GetSongBeatVisible() or 0
+        local ratio = ScrollRatioAt(ChartSteps:GetTimingData(), beat)
+        local target = base * ratio
+        if type(target) ~= "number" or target ~= target then return end
+
+        local cur = self:GetPlayerOptions("ModsLevel_Current")
+        if cur and (LastAppliedX == nil or math.abs(LastAppliedX - target) > 0.0001) then
+            cur:XMod(target, 10000)
+            LastAppliedX = target
+        end
     end,
 }

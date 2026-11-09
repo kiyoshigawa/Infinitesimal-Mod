@@ -82,6 +82,9 @@ local t = Def.ActorFrame {
 		-- difficulty entry. Cheap once warm.
 		if c.Ensure then c.Ensure() end
 		Bind(self)
+		-- Keep the X-mod scroll normalization in step with the playhead. Scalar mod
+		-- only; no field or note data is touched here.
+		if c.RefreshSpeed then c.RefreshSpeed() end
 	end,
 
 	-- Called by SongPreview when the chart signature changes (poll, i.e. a tween).

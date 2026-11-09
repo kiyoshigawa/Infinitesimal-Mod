@@ -111,6 +111,39 @@ The module reads only the joined-side count. It deliberately does not read
 `AutoSetStyle`, the current style, or style types, so flipping an engine setting
 cannot change which charts are considered safe.
 
+## Scroll normalization for X mods
+
+A menu `NoteField` draws through the engine's shared `PlayerState`, whose
+scroll/displayed-beat map is only rebuilt by `Player::Load()` when gameplay starts. A
+preview field never triggers that, so on the select screen the map is empty (identity)
+or left over from the last chart played. With an identity map the chart's `#SCROLLS`
+ratios collapse to 1, which is why charts authored on a rescaled grid (`#BPMS`÷N with
+`#SCROLLS`×N — Gotta Go S2/S4/S9) preview N× too dense while ordinary charts (Hanky
+Panky, ratio 1) look correct.
+
+The theme corrects this itself instead of relying on the engine map: `PreviewField`'s
+`SpeedTickCommand` reads the chart's `TimingData:GetScrolls(true)`, takes the ratio at
+the current `GetSongBeatVisible()`, and multiplies the field's Current X mod by it. It
+only runs for plain X mods (C mods ignore segments already; M/A mods are untouched) and
+only sets the mod when the value changes, so there is no reload, no note-data rewrite
+and no per-frame actor work. `Cache.RefreshSpeed` (cache path) and
+`NotefieldPreview.HeartbeatCommand` (fallback) tick it from the existing 50 ms poll;
+`BuildCommand` also ticks once so the first frame after a build is correct. Nothing is
+logged: the correction is silent.
+
+Known limits / things to check when touching this:
+
+- **Timing data:** if `GetScrolls(true)` returns song-level ratios because the chart's
+  split timing is not loaded, the tick is inert (every chart resolves to `ratio=1`,
+  including charts that have `#SCROLLS`). That points at the timing source, not the
+  math.
+- **Engine map:** the correction assumes the select screen's displayed-beat map is
+  identity. If it is stale from the last played chart, spacing is off by that chart's
+  ratio; the symptom is previews changing after playing a chart with scroll segments
+  (e.g. Hanky Panky becoming ~8× too spread after playing Gotta Go S4).
+- Negative scroll ratios are treated as 1, ramped `#SPEEDS` segments are left to the
+  engine, and M/A-mod previews are not normalized.
+
 ## Architecture
 
 - `Scripts/01 ChartEligibility.lua` — the rule: which chart types the current number
@@ -121,7 +154,7 @@ cannot change which charts are considered safe.
   load and updated/drawn every frame, which is what lets the fields outlive the wheel
   screen. It owns the render targets and one field per (player, StepsType), pre-creates
   them hidden for the types `ChartEligibility` allows for the current number of joined
-  sides, and exposes `Show/Hide/SetShown/Build/Ensure` through the
+  sides, and exposes `Show/Hide/SetShown/Build/Ensure/RefreshSpeed` through the
   `InfinitesimalPreviewCache` global.
 - `BGAnimations/PreviewCacheAFT.lua` — one render target, width part of its name so a
   player-count change cannot collide with the previous texture name.
@@ -129,12 +162,13 @@ cannot change which charts are considered safe.
 - `BGAnimations/PreviewCacheClient.lua` — wheel-side sprites bound to the render target
   by name; writes requests, never creates fields. Looks sprites up with `GetChild`
   because `Def.Sprite{...}` is a definition, not a live actor, and `GetChild` only
-  searches direct children.
+  searches direct children. Its heartbeat also calls `RefreshSpeed`.
 - `BGAnimations/PreviewField.lua` — the field itself, shared by the cache and the
-  in-screen fallback.
+  in-screen fallback. Owns the `SpeedTick` scroll normalization.
 - `BGAnimations/NotefieldPreview.lua` + `ScreenSelectMusic underlay/SongPreview.lua` —
   unchanged fallback path, used when the host is absent or when
-  `SessionPreviewCache=false` in `Save/OutFoxPrefs.ini`.
+  `SessionPreviewCache=false` in `Save/OutFoxPrefs.ini`. `NotefieldPreview` implements
+  `Heartbeat` to tick the same `SpeedTick` for the visible field.
 
 Costs measured in this install: creating a field ~120–200 ms warm, ~570 ms cold;
 reloading an existing field 11–28 ms plus 1.6–16 ms for the note data; the first wheel
